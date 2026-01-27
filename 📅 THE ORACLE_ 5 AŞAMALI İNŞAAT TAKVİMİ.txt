@@ -1,0 +1,37 @@
+﻿📅 THE ORACLE: 5 AŞAMALI İNŞAAT TAKVİMİ
+Toplam 5 Faz var. Neden bu sırayla yapıyoruz? Çünkü bir öncekini bitirmeden bir sonrakini test edemezsin.
+FAZ 1: TEMEL VE VERİ (Data & Database)
+* Amaç: Depoyu kurmak ve içine geçmiş veriyi doldurmak.
+* Dosyalar:
+   * config.py (Ayarlar)
+   * db_manager.py (Veritabanı oluşturucu)
+   * data_loader.py (Kaggle CSV'lerini okuyup DB'ye yazan kod)
+   * team_mapping.json (İsim düzeltici)
+* Neden İlk? Veri olmadan model eğitemeyiz.
+FAZ 2: BEYİN VE EĞİTİM (Math & AI Models)
+* Amaç: Veriyi kullanarak yapay zekayı ve matematiksel modelleri oluşturmak.
+* Dosyalar:
+   * models/dixon_coles.py (Skor tahmini yapan motor)
+   * models/xgboost_model.py (Maç sonucu tahmini yapan motor)
+   * training/trainer.py (Modelleri eğitip .pkl dosyası olarak kaydeden kod)
+* Neden İkinci? Veritabanı hazır olmadan model çalışmaz.
+FAZ 3: DENETİM VE SİMÜLASYON (Validation & Backtest)
+* Amaç: Modellerin "Sallamadığını" ve "Para Kazandırdığını" kanıtlamak.
+* Dosyalar:
+   * simulation/backtest_engine.py (Geçmişe dönük test)
+   * simulation/wallet.py (Sanal para hesabı)
+   * services/value_calculator.py (Bahis oranlarındaki hatayı bulan formül)
+* Neden Üçüncü? Beyni oluşturduk ama akıllı mı aptal mı bilmiyoruz. Bu fazda beyni sınıyoruz.
+FAZ 4: CANLI BORU HATTI (Live Pipeline & Gemini)
+* Amaç: Sistemi internete bağlamak ve güncel maçları yorumlatmak.
+* Dosyalar:
+   * scrapers/fixture_bot.py (Gelecek maçları çeken bot)
+   * scrapers/news_bot.py (Haberleri çeken bot)
+   * services/gemini_service.py (Google AI ile haber yorumlama)
+   * api/main.py (FastAPI ile sonuçları dışarı açma)
+* Neden Dördüncü? Sistem geçmişte başarılıysa, artık canlı veriye bağlamayı hak etmiştir.
+FAZ 5: VİTRİN (Frontend - Flutter)
+* Amaç: Her şeyi güzel bir ekranda göstermek.
+* Dosyalar:
+   * Flutter Web Projesi (Tüm arayüz kodları)
+* Neden Son? Arkada çalışan bir motor yoksa, arayüz sadece boş bir kabuktur.

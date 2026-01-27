@@ -1,0 +1,113 @@
+﻿📜 THE ORACLE: PROJE TEKNİK DÖKÜMANTASYONU
+1. PROJE TANIMI VE KAPSAMI
+The Oracle, İngiltere Premier Ligi üzerine odaklanan, Hibrit Yapay Zeka (İstatistiksel Model + LLM) mimarisini kullanan, yerel (localhost) çalışan, ticari olmayan bir Ar-Ge tahmin simülasyonudur. Sistem, geçmiş 10 yıllık verilerle eğitilir, "Walk-Forward" yöntemiyle kendini doğrular, güncel verileri scrape eder, haberleri Gemini AI ile analiz eder ve sadece matematiksel olarak "Value" (Değerli) bulduğu bahisleri önerir.
+Temel Prensip: "Asla sallama. Önce matematik, sonra analiz, en son sunum."
+________________
+
+
+2. TEKNOLOJİ YIĞINI (TECH STACK)
+* Backend & AI: Python 3.10+
+* Veritabanı: SQLite (Yerel dosya tabanlı)
+* API Framework: FastAPI
+* Data Science: Pandas, NumPy, SciPy (Poisson/Dixon-Coles), Scikit-Learn, XGBoost.
+* LLM Entegrasyonu: Google Generative AI (Gemini Pro)
+* Scraping: BeautifulSoup4, Requests
+* Frontend: Flutter (Web Build)
+* Grafikler: fl_chart
+________________
+
+
+3. DİZİN YAPISI (DIRECTORY STRUCTURE)
+Proje tam olarak bu hiyerarşide oluşturulmalıdır:
+Plaintext
+/OracleProject
+├── /data
+│   ├── /raw_csv          # Kaggle/Football-data.co.uk ham dosyaları
+│   ├── oracle.db         # Ana SQLite Veritabanı
+│   └── /logs             # Backtest ve Simülasyon raporları
+├── /backend
+│   ├── /core             # Config, Team Mapping JSON, Utils
+│   ├── /database         # DB bağlantı ve CRUD işlemleri
+│   ├── /models           # .pkl (Eğitilmiş modeller) ve eğitim scriptleri
+│   ├── /scrapers         # Fikstür, Sonuç ve Haber botları
+│   ├── /services         # Value hesaplama, Risk analizi mantığı
+│   ├── /api              # FastAPI route'ları
+│   └── main.py           # Entry point
+├── /frontend             # Flutter Web Projesi
+└── requirements.txt
+
+
+________________
+
+
+4. VERİTABANI ŞEMASI (SQLITE)
+oracle.db içerisinde aşağıdaki tablolar zorunludur:
+1. matches_history: Geçmiş maç verileri (Eğitim seti).
+   * Columns: id, date, home_team, away_team, fthg, ftag, result (H/D/A), stats (JSON), odds (Home, Draw, Away).
+2. fixtures: Oynanmamış gelecek maçlar.
+   * Columns: id, date, time, home_team, away_team, status.
+3. predictions: Model tahminleri.
+   * Columns: match_id, prob_home, prob_draw, prob_away, predicted_score, ai_risk_analysis (Text), is_value (Bool), confidence_score.
+4. wallet_simulation: Backtest finansal kayıtları.
+   * Columns: id, date, match_id, bet_type, stake, odds, pnl (Profit/Loss), balance.
+________________
+
+
+5. MODÜL VE ALGORİTMA DETAYLARI
+MODÜL A: VERİ MOTORU (Data Engine)
+1. Loader: football-data.co.uk EPL verilerini (son 10 yıl) indirip DB'ye yazar.
+2. Mapping: Takım isimlerini standartlaştırır. (Örn: "Man Utd" -> "Manchester United"). /backend/core/team_mapping.json dosyasını referans alır.
+3. Scraper:
+   * Gelecek haftanın fikstürünü çeker.
+   * Takımların sakat/cezalı bilgilerini ve son dakika haberlerini Google News RSS üzerinden çeker.
+MODÜL B: SAYISAL ZEKÂ (Quantitative Models)
+* Model 1 (Dixon-Coles / Poisson):
+   * Takımların "Hücum" ve "Savunma" güçlerini hesaplar.
+   * Çıktı olarak Skor Olasılıklarını (Örn: 2-1: %12) verir.
+* Model 2 (XGBoost Classifier):
+   * Features: Son 5 maç formu, Elo Rating farkı, İç/Dış saha puanı.
+   * Çıktı olarak Maç Sonucu Olasılıklarını (MS 1-0-2) verir.
+* Ensemble (Birleştirme): İki modelin çıktısını ağırlıklı ortalama ile birleştirir.
+MODÜL C: SEMANTİK ZEKÂ (Gemini AI Layer)
+* Input: Matematiksel Olasılıklar + Scrape edilmiş Haberler/Sakatlıklar.
+* Prompt Mantığı: "Sen bir risk analistisin. Matematik X diyor ama haberlerde Y var. Bu riski değerlendir."
+* Output: Revize edilmiş Güven Skoru ve Kısa Yorum.
+MODÜL D: FİNANSAL MOTOR (Validation & Value)
+* Walk-Forward Validation: Modeli 2010-2018 ile eğit -> 2019'u tahmin et -> 2019'u öğren -> 2020'yi tahmin et... (Geleceği görmeden test et).
+* Value Bet Formülü: (Model Olasılığı * Bahis Oranı) > 1.05. Sadece bu koşul sağlanırsa "Bahis Yap" sinyali üretilir.
+* Sanal Kasa: 1000 Birim başlangıç, sabit (Flat) bahis stratejisi.
+________________
+
+
+6. API VE ARAYÜZ (UI/UX)
+Backend API (FastAPI)
+* GET /api/train: Modelleri eğitir ve backtest raporunu döner.
+* GET /api/predict-next-week: Gelecek maçları çeker, analiz eder ve JSON döner.
+* GET /api/stats: ROI, Hit Rate ve Kasa durumunu döner.
+Frontend (Flutter Web)
+* Tema: Dark Mode (Finansal Dashboard stili).
+* Ekranlar:
+   1. Dashboard: Gelecek maçlar listesi. "Value" olanlar Yeşil kutu ile vurgulanır.
+   2. Maç Detay: Skor tahmini, Olasılık Pastası, Gemini Yorumu, İstatistik Grafikleri.
+   3. Audit: Geçmiş performans grafiği ve ROI tablosu.
+________________
+
+
+7. ADIM ADIM UYGULAMA PLANI (EXECUTION PLAN)
+AI Geliştirici, kodu şu sırayla yazmalıdır:
+1. SETUP: Klasör yapısını kur, requirements.txt oluştur.
+2. DATA LAYER: football-data.co.uk CSV'lerini indirip oracle.db oluşturan scripti yaz.
+3. MATH LAYER: Dixon-Coles ve XGBoost modellerini içeren trainer.py yaz.
+4. VALIDATION: Walk-Forward Backtest döngüsünü ve Sanal Kasa simülasyonunu kodla. Rapor üret.
+5. PIPELINE: Canlı fikstür ve haber scraperlarını yaz. Gemini API entegrasyonunu yap.
+6. API: Python fonksiyonlarını FastAPI endpointlerine bağla.
+7. UI: Flutter projesini oluştur, API'ye bağla, Dark Mode arayüzü tasarla.
+________________
+
+
+8. KATI KURALLAR (CONSTRAINTS)
+1. No Paid APIs: Ücretli hiçbir spor API'si kullanılmayacak. Veri kaynağı CSV ve Scraping'dir.
+2. Offline First: Geçmiş veriler ve modeller internet olmadan da çalışabilmelidir.
+3. Look-ahead Bias: Backtest sırasında asla gelecekteki veri geçmişe sızdırılmamalıdır.
+4. Direct DB Access: Flutter, veritabanına asla doğrudan bağlanmaz; sadece API kullanır.
+5. Strict Typing: Python kodlarında type hinting kullanılmalıdır.

@@ -1,0 +1,65 @@
+﻿"The Oracle" için Veri Anayasası:
+________________
+
+
+1. TARİHSEL VERİ SETİ (EĞİTİM İÇİN)
+Modelin geçmişi öğrenmesi için kullanacağımız "Ansiklopedi".
+* Kaynak: football-data.co.uk (İngiltere Premier Ligi - EPL).
+   * Neden? Dünyanın en temiz, en standart ve ücretsiz CSV kaynağıdır. Bahis oranlarını ve maç istatistiklerini içerir.
+* Kapsam (Zaman Penceresi): Son 10 Sezon (2014-2015 sezonundan günümüze).
+   * Mantık: 10 yıldan öncesi futbolun çok değiştiği (VAR yoktu, oyun hızı düşüktü) dönemdir, modelin kafasını karıştırır.
+* Kullanılacak Sütunlar (Kesin Liste):
+   * Date: Maç Tarihi
+   * HomeTeam, AwayTeam: Takım Adları
+   * FTHG, FTAG: Tam Zamanlı Ev/Dep Golü (Skor tahmini için)
+   * FTR: Maç Sonucu (1-0-2)
+   * HS, AS: Toplam Şut (Hücum gücü hesaplaması için)
+   * HST, AST: İsabetli Şut (Bitiricilik analizi için kritik)
+   * B365H, B365D, B365A: Bet365 Oranları (Value Bet hesaplaması için referans).
+________________
+
+
+2. CANLI VERİ AKIŞI (TAHMİN İÇİN)
+Model eğitildikten sonra, gelecek haftanın verisine ihtiyaç duyacak.
+* Fikstür Kaynağı: Transfermarkt veya SkySports (Web Scraping).
+   * Çekilecek Veri: Tarih, Saat, Ev Sahibi, Deplasman.
+* Kadro ve Sakatlık: Transfermarkt (Scraping).
+   * Çekilecek Veri: Muhtemel 11'ler, Cezalılar, Sakatlar. (Bu veri Gemini'ye metin olarak verilecek).
+* Haber Kaynağı: Google News RSS Feed.
+   * Yöntem: Python feedparser kütüphanesi ile "Arsenal FC News" sorgusu atılıp son 10 başlık çekilecek.
+________________
+
+
+3. VERİ STANDARDİZASYONU (MAPPING PROTOKOLÜ)
+En büyük baş ağrısı takımların farklı kaynaklarda farklı yazılmasıdır. Bunu çözmek için proje içine sabit bir sözlük (JSON) koyacağız.
+* Dosya: /backend/core/team_mapping.json
+* Yapı: Her zaman football-data.co.uk isimlendirmesini "ID" (Kimlik) olarak kabul edeceğiz.
+Örnek İçerik:
+JSON
+{
+  "Man United": ["Manchester United", "Man Utd", "Man. Utd."],
+  "Nott'm Forest": ["Nottingham Forest", "Nottingham"],
+  "Wolves": ["Wolverhampton Wanderers", "Wolverhampton"]
+}
+*    * Kural: Python scraper bir isim çektiğinde önce bu listeye bakacak, ismini standart hale getirip veritabanına öyle kaydedecek.
+________________
+
+
+4. FEATURE ENGINEERING (ÖZNİTELİK MÜHENDİSLİĞİ)
+Ham veriyi modele vermeyeceğiz. Modele vermeden önce Python ile şu türetilmiş verileri hesaplayacağız:
+1. Form Puanı (Last 5): Son 5 maçta alınan puan ortalaması. (Örn: 2.4 puan).
+2. Hücum Gücü (Attack Strength): Takımın attığı gol / Lig ortalaması.
+3. Savunma Gücü (Defense Strength): Takımın yediği gol / Lig ortalaması.
+4. Yorgunluk İndeksi: Son maçını kaç gün önce oynadı? (3 günden azsa risk).
+5. Elo Rating: Satrançtaki puanlama sisteminin futbola uyarlanmış hali. (Her hafta güncellenecek).
+________________
+
+
+5. VERİ GÜNCELLEME DÖNGÜSÜ (CRON LOGIC)
+Sistemin veriyi ne zaman güncelleyeceği kurala bağlanmalıdır.
+1. Pazartesi Sabahı: Hafta sonu biten maçların sonuçları football-data.co.uk CSV'sinden veya Scraper ile çekilir, DB'ye işlenir. Modeller yeniden eğitilir (Retrain).
+2. Cuma Gecesi: Hafta sonu oynanacak maçların fikstürü ve muhtemel kadroları çekilir. Tahminler oluşturulur.
+________________
+
+
+Özet: Veri stratejimiz; 10 yıllık temiz CSV verisi üzerine kurulu, canlı veriyi scraping ile alan ve isimleri JSON sözlüğü ile eşleyen bir yapıdır.

@@ -1,0 +1,71 @@
+﻿"The Oracle" Kullanıcı Deneyimi ve Arayüz Planı:
+________________
+
+
+1. TASARIM FELSEFESİ (Design Language)
+* Tema: Dark Mode (Koyu Tema). Veri analistleri siyah ekranda çalışır. Göz yormaz, veriyi parlatır.
+* Renk Paleti:
+   * 🟢 Neon Yeşil: Value Bet (Fırsat Var).
+   * 🔴 Kırmızı: Yüksek Risk / Uzak Dur.
+   * 🟡 Sarı: Nötr / Takip Et.
+   * ⚪ Beyaz/Gri: Metinler ve İstatistikler.
+* Yerleşim: Desktop-First. (Bilgisayarında çalışacağı için geniş ekrana göre 3 kolonlu yapı).
+________________
+
+
+2. SAYFA YAPISI VE AKIŞ (Sitemap)
+Uygulama sadece 3 ana ekrandan oluşacak. Basit ve odaklı.
+EKRAN A: "OPERASYON MERKEZİ" (Dashboard)
+Uygulamayı açtığında gördüğün ana ekran.
+* Üst Bar (Header):
+   * Sanal Kasa Durumu: (Örn: Kasa: 1.250 TL | Haftalık Kâr: +%12 🟢).
+   * Son Güncelleme: (Örn: "Veriler 15 dk önce çekildi").
+* Ana Liste (Haftanın Fikstürü):
+   * Tüm maçlar alt alta kartlar halindedir.
+   * Filtreleme: "Sadece Value Olanları Göster" (En önemli buton).
+   * Kart Tasarımı:
+      * Sol: Arsenal vs Chelsea (Saat 19:00).
+      * Orta: Tahmin (MS 1) ve Güven Skoru (%75).
+      * Sağ: VALUE KUTUSU. Eğer fırsat varsa burası yeşil yanıp söner: Oran: 2.10 (Hedef: 1.80).
+EKRAN B: "ANALİZ ODASI" (Match Detail)
+Dashboard'da bir maça tıkladığında açılan detay sayfası. Ekran 3 kolona bölünür:
+* Sol Kolon (Soğuk Veri - Matematik):
+   * Dixon-Coles Skoru: "Beklenen Skor: 2 - 1".
+   * Olasılık Pastası: Ev %55 - Ber %25 - Dep %20.
+   * Grafikler: Takımların son 5 maçlık form grafiği (Line Chart) ve H2H (Bar Chart).
+* Orta Kolon (Sıcak Veri - Gemini AI):
+   * Başlık: "Yapay Zeka Raporu".
+   * İçerik: Gemini'den gelen metin burada yazar.
+      * Örn: "Matematik Arsenal diyor ANCAK Arsenal'in en iyi forveti dün sakatlandı. Savunma hattında da eksikler var. Bu maçtaki %55 ihtimal yanıltıcı olabilir. Risk seviyesi YÜKSEK."
+   * Haber Kaynakları: Analizin dayandığı haber başlıklarının listesi.
+* Sağ Kolon (Karar Panosu):
+   * Tavsiye: Büyük puntolarla "OYNA" veya "PAS GEÇ".
+   * Riskmetre: İbreli bir gösterge (Yeşil - Sarı - Kırmızı).
+   * Value Hesaplayıcı: "Bahis bürosu bu maça 2.10 veriyor. Bizim modelimize göre gerçek oran 1.60 olmalıydı. Burada %30 değer var."
+EKRAN C: "DENETİM RAPORU" (Audit Log)
+Sistemin dürüstlüğünü kontrol ettiğin ekran.
+* Backtest Grafiği: 2010'dan bugüne kasanın büyüme grafiği.
+* Geçmiş Tahminler: Geçen hafta ne demişiz, ne olmuş? (Yeşil/Kırmızı tikler).
+* Başarı Metrikleri: ROI, Hit Rate, Max Drawdown istatistikleri.
+________________
+
+
+3. FLUTTER TEKNİK DETAYLARI
+Arayüzü kodlarken şu paketleri kullanacağız (Şimdiden pubspec.yaml için not et):
+* Grafikler: fl_chart (Piyasadaki en iyi, en şık grafik kütüphanesi).
+* HTTP İstekleri: dio veya http (Python API ile konuşmak için).
+* State Management: Provider veya Riverpod (Basit tutmak için Provider yeterli).
+* Tasarım: google_fonts (Roboto veya JetBrains Mono gibi "teknik" fontlar için).
+________________
+
+
+4. KULLANICI ETKİLEŞİMİ (User Journey)
+Senin bu sistemi kullanım rutinin şöyle olacak:
+1. Cuma Akşamı: Python scriptini çalıştırıyorsun. (python main.py).
+2. Script verileri çekiyor, analiz ediyor, Gemini'ye soruyor. (Bu 2-3 dakika sürer).
+3. Terminal: "Analiz Tamamlandı. Server Başlatıldı." yazısını görüyorsun.
+4. Flutter: Tarayıcıyı açıyorsun (localhost:8080).
+5. Karşına Dashboard çıkıyor.
+6. "Sadece Value Olanları Göster" butonuna basıyorsun. Liste 20 maçtan 3 maça düşüyor.
+7. Bu 3 maçı detaylı inceliyorsun. Gemini'nin yorumlarını okuyorsun.
+8. Aklına yatanlara (sanal veya gerçek) bahsini alıyorsun.

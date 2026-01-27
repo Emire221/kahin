@@ -1,0 +1,96 @@
+﻿1. FİZİKSEL DİZİN VE KLASÖR YAPISI
+Proje tek bir ana klasör altında toplanacak. Bu yapı, hem senin geliştirmene hem de sistemin kendi içinde haberleşmesine en uygun standarttır.
+Plaintext
+/OracleProject
+│
+├── /data (Veri Deposu)
+│   ├── /raw_csv          # Kaggle'dan indirilen ham, ellenmemiş dosyalar.
+│   ├── oracle.db         # PROJENİN KALBİ. Tüm temiz veri ve sonuçlar burada (SQLite).
+│   └── /logs             # Simülasyon raporları (Excel/Text çıktısı).
+│
+├── /backend (Python - Beyin)
+│   ├── /core             # Ayarlar ve yardımcı araçlar.
+│   ├── /database         # DB bağlantı kodları.
+│   ├── /models           # .pkl uzantılı eğitilmiş yapay zeka dosyaları.
+│   ├── /scrapers         # Veri çeken ajan botlar (Transfermarkt, Fikstür).
+│   ├── /services         # İş Mantığı (Hesaplama, Value bulma).
+│   ├── /api              # Flutter ile konuşan kapı (FastAPI).
+│   └── main.py           # Sistemi başlatan dosya.
+│
+├── /frontend (Flutter - Yüz)
+│   ├── /lib
+│   │   ├── /models       # JSON verisini Dart nesnesine çevirenler.
+│   │   ├── /screens      # Sayfalar (Maç Listesi, Detay).
+│   │   └── /services     # Backend'den veri isteyen servisler.
+│   └── /web              # Web çıktı dosyaları.
+│
+└── requirements.txt      # Python kütüphane listesi.
+
+
+________________
+
+
+2. TEKNOLOJİ YIĞINI (TECH STACK) - KİLİTLİ LİSTE
+Gri alan yok. Kullanacağımız teknolojiler şunlardır:
+Katman
+	Teknoloji
+	Neden Seçildi?
+	Veritabanı
+	SQLite
+	Kurulum gerektirmez, tek dosyadır, Python'a gömülüdür, yerel projeler için en hızlısıdır.
+	Backend Dili
+	Python 3.10+
+	Veri bilimi ve Yapay Zeka kütüphaneleri için zorunludur.
+	API Framework
+	FastAPI
+	Flask'tan daha hızlıdır, otomatik dökümantasyon yapar ve Flutter (JSON) ile harika anlaşır.
+	Veri İşleme
+	Pandas & NumPy
+	Excel gibi veri tablolarını yönetmek için endüstri standardıdır.
+	Matematik
+	SciPy & Statsmodels
+	Dixon-Coles ve Poisson hesaplamaları için.
+	Machine Learning
+	XGBoost
+	Tablo verilerinde (futbol istatistikleri) en yüksek başarıyı veren algoritmadır.
+	LLM (AI)
+	Gemini Pro API
+	Google Generative AI kütüphanesi ile metin analizi.
+	Frontend
+	Flutter (Web)
+	Hızlı arayüz ve senin uzmanlık alanın.
+	________________
+
+
+3. VERİTABANI ŞEMASI (SQL Mimarisi)
+oracle.db dosyasının içinde şu 4 ana tablo olacak. Bunların yapısı sabittir:
+1. matches_history (Eğitim Sahası):
+   * 10 yıllık tüm bitmiş maçlar.
+   * Sütunlar: id, date, home_team, away_team, fthg (ev gol), ftag (dep gol), result (1-0-2), stats (json: şut, korner vb.), odds (bahis oranları).
+2. fixtures (Operasyon Sahası):
+   * Oynanmamış, gelecek maçlar.
+   * Sütunlar: id, date, home_team, away_team, status (pending).
+3. predictions (Tahmin Arşivi):
+   * Sistemin ürettiği sonuçlar (Doğrulama yapmak için).
+   * Sütunlar: match_id, predicted_score_home, predicted_score_away, prob_home_win, gemini_comment, is_value_bet, bet_result (kazandı/kaybetti).
+4. simulation_wallet (Muhasebeci):
+   * Backtest sırasındaki para hareketi.
+   * Sütunlar: date, match_id, bet_type (MS1 vb.), amount, profit_loss, balance.
+________________
+
+
+4. VERİ AKIŞ ŞEMASI (Pipeline)
+Sistem düğmesine bastığında veri şu yolu izler:
+1. RAW: Python, /data/raw_csv klasöründeki CSV'yi okur.
+2. ETL: Veriyi temizler (Takım isimlerini standartlaştırır: "ManUtd" -> "Manchester United") ve matches_history tablosuna yazar.
+3. TRAIN: models klasöründeki script çalışır, DB'den veriyi alır, matematiği kurar ve .pkl dosyası olarak beyni kaydeder.
+4. PREDICT: Scraper yeni maçları fixtures tablosuna atar. Kaydedilen beyin (.pkl) bu maçları okur, tahmin üretir ve predictions tablosuna yazar.
+5. SERVE: Flutter arayüzü http://localhost:8000/api/matches adresine istek atar.
+6. VIEW: Python, predictions tablosundaki veriyi JSON olarak Flutter'a yollar. Sen ekranda görürsün.
+________________
+
+
+5. ENTEGRASYON KURALLARI (Kesin Hükümler)
+1. No Direct Access: Flutter asla ama asla doğrudan veritabanına (oracle.db) bağlanmayacak. Her zaman Python API üzerinden konuşacak.
+2. Offline First: Sistem internet yokken de açılabilmeli ve geçmiş analizleri gösterebilmeli. (Sadece Scraper ve Gemini internet ister).
+3. Single Source of Truth: Bir takımın adı, bir maçın skoru neyse oracle.db içindeki doğrudur. Başka yere bakılmaz.

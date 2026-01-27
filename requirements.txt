@@ -1,0 +1,39 @@
+# The Oracle - Python Dependencies
+# FAZ 1: Veri Katmanı ve Veritabanı
+
+# Core Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+
+# Data Processing
+pandas==2.2.0
+numpy==1.26.3
+
+# Database
+# SQLite Python'un standart kütüphanesinde yerleşik olarak gelir
+
+# Machine Learning (Sonraki fazlar için)
+scikit-learn==1.4.0
+xgboost==2.0.3
+scipy==1.12.0
+statsmodels==0.14.1
+
+# Web Scraping
+beautifulsoup4==4.12.3
+requests==2.31.0
+feedparser==6.0.11
+
+# LLM Integration
+google-generativeai==0.4.0
+
+# Utilities
+python-dotenv==1.0.0
+pydantic==2.6.0
+pydantic-settings==2.1.0
+
+# Logging & Debugging
+loguru==0.7.2
+
+# Testing
+pytest==8.0.0
+pytest-asyncio

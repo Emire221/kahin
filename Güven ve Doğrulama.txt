@@ -1,0 +1,68 @@
+﻿"The Oracle" için Güven ve Doğrulama Protokolü:
+________________
+
+
+1. TEST YÖNTEMİ: "WALK-FORWARD VALIDATION" (Zaman Makinesi)
+Modeli "Eğittim bitti, hadi test edelim" demeyeceğiz. Modeli yıl yıl büyüterek test edeceğiz. Bu yöntem, modelin değişen futbol dinamiklerine (VAR'ın gelmesi, 5 oyuncu değişikliği kuralı vb.) adapte olup olmadığını kanıtlar.
+Protokol Adımları (Kesin Döngü):
+1. Dönem 1 (Eğitim): Model, 2010-2018 yılları arasındaki veriyi "görür" ve öğrenir.
+2. Dönem 1 (Sınav): Modelden, 2019 sezonunun maçlarını (henüz görmediği maçları) tahmin etmesi istenir.
+3. Kayıt: 2019 tahminleri ve sonuçları bir kenara yazılır.
+4. Dönem 2 (Yeniden Eğitim): Model hafızasına 2019 verilerini de ekler (artık öğrenmiştir).
+5. Dönem 2 (Sınav): Modelden 2020 sezonunu tahmin etmesi istenir.
+6. Tekrar: Bu döngü günümüze (2024) kadar sürer.
+Sonuç: Elimizde hile yapılmamış, tamamen gerçek hayat simülasyonu olan 5 yıllık bir tahmin karnesi olur.
+________________
+
+
+2. EKONOMİK SİMÜLASYON: SANAL CÜZDAN (Virtual Wallet)
+Modelin maç sonucunu bilmesi yetmez, para kazandırması gerekir. Bunun için kodun içinde çalışacak bir "Sanal Muhasebeci" modülü yazacağız.
+Simülasyon Kuralları:
+* Başlangıç Kasası: 1000 Birim (TL/Dolar).
+* Bahis Stratejisi (Flat Stake): Her Value bahse sabit 10 Birim basılır. (Karmaşıklığı önlemek için ilk etapta sabit miktar kullanacağız).
+* Value Filtresi: Sadece modelin bulduğu olasılık, bahis oranından %5 daha değerliyse (Expected Value > 1.05) bahis yapılır. Aksi takdirde "Pas Geçilir".
+Senaryo Örneği:
+* Model: "Arsenal kazanır (%60)".
+* Oran: 2.00.
+* Değer: (0.60 * 2.00) = 1.20 (>1.05 olduğu için OYNA).
+* Bahis: 10 Birim yatırıldı.
+* Sonuç: Arsenal kazanırsa Kasa +10 Birim artar (Net Kar). Kaybederse -10 Birim azalır.
+________________
+
+
+3. BAŞARI METRİKLERİ (KARNE)
+Simülasyon bittiğinde sistem bize bir audit_report.json (Denetim Raporu) verecek. Bu raporda şu 3 sayıya bakacağız. Eğer bu sayılar hedefin altındaysa, proje BAŞARISIZ sayılacak ve Faz 1'e (Model Geliştirme) geri dönülecek.
+Metrik
+	Anlamı
+	HEDEF (Kabul Sınırı)
+	ROI (Return on Investment)
+	Yatırdığımız paraya oranla net kârımız.
+	>%5 (Banka faizinin üstünde olmalı)
+	Accuracy (Hit Rate)
+	Value olarak seçtiğimiz maçların tutma oranı.
+	>%55 (Şanstan daha iyi olmalı)
+	Max Drawdown
+	Kasanın gördüğü en büyük düşüş (Zirveden dibe).
+	<%20 (Kasanın %20'sinden fazlasını eritmeme garantisi)
+	Not: ROI en önemli metriktir. Model %40 isabetle bilip, yüksek oranları yakalayarak %20 ROI yapıyorsa bu model MÜKEMMELDİR.
+________________
+
+
+4. "AŞIRI ÖĞRENME" (OVERFITTING) KONTROLÜ
+Modelin veriyi ezberleyip ezberlemediğini anlamak için "Tutarlılık Testi" yapacağız.
+* Eğitim Başarısı vs Test Başarısı:
+   * Eğer model eğitim verisinde %90 başarı gösteriyor ama test verisinde (yeni maçlarda) %45'e düşüyorsa, model ezberlemiştir (Overfitting).
+   * Kural: Eğitim ve Test başarısı arasındaki fark %10'dan fazla olamaz.
+________________
+
+
+5. GEMINI (AI) ETKİ ANALİZİ
+Yapay zeka katmanının gerçekten işe yaradığını kanıtlamak için A/B Testi simülasyonu yapacağız.
+* Simülasyon A (Sadece Matematik): Gemini kapalı. Sadece istatistiksel model tahmin yapar.
+* Simülasyon B (Hibrit): Gemini açık. Haberleri yorumlayıp kararı değiştirir.
+* Karar: Eğer Simülasyon B kasası, Simülasyon A kasasından daha yüksekse Gemini entegrasyonu onaylanır. Aksi takdirde "Gemini sadece kafa karıştırıyor" denilip devreden çıkarılır.
+________________
+
+
+ÖZET:
+Güven ve Doğrulama protokolümüz; geçmişe dönük "Zaman Makinesi" testi yapan, sanal para ile kârlılığı ölçen ve ROI > %5 olmazsa sistemi "Başarısız" ilan edip yayına almayan katı bir denetim mekanizmasıdır.

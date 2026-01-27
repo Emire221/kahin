@@ -1,0 +1,25 @@
+{
+  "dixon_coles": {
+    "training_date": "2026-01-28T01:19:41.163931",
+    "training_time_seconds": 144.12,
+    "num_matches": 990,
+    "num_teams": 25,
+    "home_advantage": 0.4177,
+    "rho": -0.1132
+  },
+  "xgboost": {
+    "training_date": "2026-01-28T01:19:45.618937",
+    "training_time_seconds": 4.45,
+    "num_matches": 990,
+    "num_teams": 25,
+    "feature_count": 19
+  },
+  "summary": {
+    "training_date": "2026-01-28T01:19:45.667446",
+    "total_matches": 990,
+    "date_range": {
+      "start": "2023-08-11",
+      "end": "2026-01-26"
+    }
+  }
+}

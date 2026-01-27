@@ -1,0 +1,85 @@
+﻿"The Oracle" Zeka Algoritması ve Modelleri:
+________________
+
+
+1. KATMAN: SAYISAL MOTOR (The Quantitative Core)
+Burası duygu, his veya haber bilmez. Sadece sayılara bakar. İki farklı matematiksel model paralel çalışacak ve birbirini denetleyecek.
+A. Model 1: Dixon-Coles (Skor Tahmincisi)
+Futbolun doğası gereği gol sayıları rastgele değildir. Bu model, takımların hücum ve savunma güçlerini hesaplayarak Doğru Skor olasılığını bulur.
+* Görevi: "Bu maç 2-1 biter" diyebilmek.
+* Matematik: Düzeltilmiş Poisson Dağılımı. (0-0 ve 1-1 gibi düşük skorlu beraberlikleri klasik Poisson'dan daha iyi tahmin eder).
+* Girdiler:
+   * Takımın son 20 maçtaki Attığı/Yediği Gol Ortalaması.
+   * Ligin genel gol ortalaması.
+   * İç Saha / Dış Saha faktörü.
+* Çıktısı: Maç Skoru Matrisi (Örn: %12 ihtimalle 1-0, %8 ihtimalle 2-1).
+* Türetilen Bahisler: Alt/Üst 2.5, Karşılıklı Gol Var/Yok.
+B. Model 2: XGBoost (Sonuç Sınıflandırıcısı)
+Makine öğrenmesi dünyasının "Kaggle Kralı". Tablo verilerinde en iyi çalışan algoritmadır.
+* Görevi: "Maçı kim kazanır (1-0-2)?" sorusunu cevaplamak.
+* Algoritma: Gradient Boosting (Karar Ağaçları).
+* Girdiler (Features):
+   * Elo Rating Farkı: İki takım arasındaki güç farkı.
+   * Form Endeksi: Son 5 maçta alınan puanlar.
+   * Yorgunluk: Son maçtan bu yana geçen gün sayısı.
+   * H2H: İki takımın birbirine karşı geçmiş performansı.
+   * Kadro Değeri: Transfermarkt toplam kadro değeri.
+* Çıktısı: Olasılık Yüzdeleri (Ev: %55, Ber: %25, Dep: %20).
+________________
+
+
+2. KATMAN: ANALİTİK ZEKÂ (The Qualitative Analyst - Gemini)
+Sayısal modellerin kör noktası olan "bağlamı" görür.
+* Teknoloji: Google Gemini Pro API (RAG - Retrieval Augmented Generation).
+* Görevi: Sayısal veriyi "Haberler" ile çarpıştırıp bir "Risk Raporu" oluşturmak. Gemini'den doğrudan "Kim kazanır?" demesini istemeyeceğiz (Halüsinasyon görür). Ona "Analiz Yap" diyeceğiz.
+Prompt Stratejisi (Şablon):
+Plaintext
+GÖREV: Bir futbol analisti gibi davran.
+GİRDİ 1 (Matematik): İstatistiksel modelim bu maçta ev sahibine %60 şans veriyor.
+GİRDİ 2 (Haberler): [Saka sakatlandı, Deplasman takımı teknik direktörü kovuldu, Zemin karlı.]
+SORU: Bu haberler matematiksel beklentiyi destekliyor mu yoksa riske mi atıyor?
+ÇIKTI:
+1. Risk Seviyesi: (Düşük/Orta/Yüksek)
+2. Kısa Yorum: (Maksimum 2 cümle)
+3. Öneri: (Güven artır / Pas geç / Oranı düşür)
+* ________________
+
+
+3. KATMAN: KARAR MEKANİZMASI (The Decision Engine)
+İki beynin çıktısını birleştirip son kararı (Bahis Kararı) veren algoritmadır.
+Adım 1: Sentez (Synthesis)
+Matematiksel Olasılık, Gemini'nin "Risk Seviyesi"ne göre cezalandırılır veya ödüllendirilir.
+* Örnek:
+   * XGBoost: %60 Ev Sahibi.
+   * Gemini: "Yüksek Risk (Sakatlık var)".
+   * Yeni Olasılık: %60 - %10 (Ceza) = %50.
+Adım 2: Value (Değer) Hesaplaması
+Sistemin en önemli formülü budur.
+* Formül: (Bizim Olasılığımız * Bahis Oranı) - 1
+* Eşik Değeri: Eğer sonuç > 0.05 ise (Yani %5'ten fazla avantajımız varsa).
+* Karar: "VALUE BET BULUNDU - OYNA".
+________________
+
+
+4. ALGORİTMA AKIŞ ŞEMASI (Workflow)
+Süreç adım adım şöyle işleyecek ve kodlanacak:
+1. Input: Maç verileri (Arsenal vs Chelsea) sisteme girer.
+2. Process 1 (Math): Dixon-Coles ve XGBoost çalışır. -> Çıktı: Arsenal %55.
+3. Process 2 (Scraper): Haberler çekilir. -> Çıktı: "Arsenal kaptanı cezalı."
+4. Process 3 (AI): Gemini verileri yorumlar. -> Çıktı: "Risk Orta. Olasılığı %5 düşür."
+5. Process 4 (Final): Revize Olasılık %50.
+6. Process 5 (Check): Bahis Oranı 2.20. -> 0.50 * 2.20 = 1.10.
+7. Result: 1.10 > 1.00 olduğu için YEŞİL IŞIK (Value) yakılır.
+________________
+
+
+5. DOĞRULAMA METRİĞİ (Nasıl Test Edeceğiz?)
+Eğitim sırasında modelin başarısını ölçmek için Brier Score kullanacağız.
+* Neden? Sadece "Bildim/Bilemedim" demek yetmez.
+* Örnek: Model "A Takımı %90 kazanır" dedi ve takım kazandı -> Çok iyi puan.
+* Örnek: Model "A Takımı %51 kazanır" dedi ve takım kazandı -> Az puan.
+* Brier Score, modelin kendine güveninin ne kadar gerçekçi olduğunu ölçer. "Sallayan" model hemen elenir.
+________________
+
+
+ÖZET: Zeka Algoritmamız; XGBoost (Sonuç) + Dixon-Coles (Skor) matematiğini temel alan, Gemini ile haber analizi yapıp olasılıkları revize eden ve sadece Value (Değer) varsa yeşil ışık yakan bir sistemdir.
