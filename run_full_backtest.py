@@ -43,7 +43,7 @@ STAKE = 10.0
 def setup_logging(log_file: Path):
     """Log dosyası ayarla"""
     logger.remove()
-    logger.add(sys.stdout, level="INFO", format="{time:HH:mm:ss} | {level} | {message}")
+    logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}")
     logger.add(log_file, level="DEBUG", rotation="50 MB")
 
 
@@ -157,7 +157,7 @@ def simulate_season(test_df: pd.DataFrame, models: dict, wallet: Wallet, league:
                 home_team=home, away_team=away, date=match_date, actual_result=actual_result
             )
             pnl = tx.pnl if tx else 0
-            match_bets.append({'type': '1X2', 'won': won, 'pnl': pnl})
+            match_bets.append({'type': '1X2', 'choice': bet_type_map[best], 'prob': prob, 'won': won, 'pnl': pnl})
             
             # ===== 2. BAHİS: OVER/UNDER =====
             ou_probs = xgb_ou.predict_proba(home, away)
@@ -165,18 +165,18 @@ def simulate_season(test_df: pd.DataFrame, models: dict, wallet: Wallet, league:
             under = ou_probs.get('under', 0.5)
             
             if over >= under:
-                prob_ou, won_ou, bet_type = over, actual_over, 'O2.5'
+                prob_ou, won_ou, bet_type_ou = over, actual_over, 'O2.5'
             else:
-                prob_ou, won_ou, bet_type = under, not actual_over, 'U2.5'
+                prob_ou, won_ou, bet_type_ou = under, not actual_over, 'U2.5'
             
             odds_ou = 1.05 / prob_ou if prob_ou > 0 else 2.0
             tx_ou = wallet.place_bet(
-                match_id=match_counter, bet_type=bet_type,
+                match_id=match_counter, bet_type=bet_type_ou,
                 odds=odds_ou, won=won_ou, predicted_prob=prob_ou,
                 home_team=home, away_team=away, date=match_date, actual_result=f"{fthg}-{ftag}"
             )
             pnl_ou = tx_ou.pnl if tx_ou else 0
-            match_bets.append({'type': 'O/U', 'won': won_ou, 'pnl': pnl_ou})
+            match_bets.append({'type': 'O/U', 'choice': bet_type_ou, 'prob': prob_ou, 'won': won_ou, 'pnl': pnl_ou})
             
             # ===== 3. BAHİS: BTTS =====
             btts_probs = xgb_btts.predict_proba(home, away)
@@ -184,23 +184,38 @@ def simulate_season(test_df: pd.DataFrame, models: dict, wallet: Wallet, league:
             no = btts_probs.get('no', 0.5)
             
             if yes >= no:
-                prob_btts, won_btts, bet_type = yes, actual_btts, 'BTTS_Y'
+                prob_btts, won_btts, bet_type_btts = yes, actual_btts, 'BTTS_Y'
             else:
-                prob_btts, won_btts, bet_type = no, not actual_btts, 'BTTS_N'
+                prob_btts, won_btts, bet_type_btts = no, not actual_btts, 'BTTS_N'
             
             odds_btts = 1.05 / prob_btts if prob_btts > 0 else 2.0
             tx_btts = wallet.place_bet(
-                match_id=match_counter, bet_type=bet_type,
+                match_id=match_counter, bet_type=bet_type_btts,
                 odds=odds_btts, won=won_btts, predicted_prob=prob_btts,
                 home_team=home, away_team=away, date=match_date, actual_result=f"BTTS:{'Y' if actual_btts else 'N'}"
             )
             pnl_btts = tx_btts.pnl if tx_btts else 0
-            match_bets.append({'type': 'BTTS', 'won': won_btts, 'pnl': pnl_btts})
+            match_bets.append({'type': 'BTTS', 'choice': bet_type_btts, 'prob': prob_btts, 'won': won_btts, 'pnl': pnl_btts})
             
             total_pnl = pnl + pnl_ou + pnl_btts
             wins = sum(1 for b in match_bets if b['won'])
             
-            logger.debug(f"[{league}] {home} vs {away}: {wins}/3 | PnL: {total_pnl:+.2f}")
+            # Detaylı loglama (Kullanıcı isteği üzerine)
+            logger.debug(f"[{league}] {home} vs {away}")
+            
+            # 1X2 Detayı
+            b1 = match_bets[0]
+            logger.debug(f"   > 1X2 : {b1['choice']:<4} ({b1['prob']:.2%}) | Sonuç: {predicted:<3} | Durum: {'✅' if b1['won'] else '❌'} | PnL: {b1['pnl']:+.2f}")
+            
+            # O/U Detayı
+            b2 = match_bets[1]
+            logger.debug(f"   > O/U : {b2['choice']:<4} ({b2['prob']:.2%}) | Sonuç: {'Ov' if actual_over else 'Un':<3} | Durum: {'✅' if b2['won'] else '❌'} | PnL: {b2['pnl']:+.2f}")
+            
+            # BTTS Detayı
+            b3 = match_bets[2]
+            logger.debug(f"   > BTTS: {b3['choice']:<4} ({b3['prob']:.2%}) | Sonuç: {'Y' if actual_btts else 'N':<3}  | Durum: {'✅' if b3['won'] else '❌'} | PnL: {b3['pnl']:+.2f}")
+            
+            logger.debug(f"   = Toplam PnL: {total_pnl:+.2f}")
             
             results.append({'bets': match_bets, 'total_pnl': total_pnl})
             
