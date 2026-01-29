@@ -140,6 +140,8 @@ class BacktestEngine:
         self._db = None
         self._dixon_coles: Optional[DixonColesModel] = None
         self._xgboost: Optional[XGBoostPredictor] = None
+        self._xgboost_ou: Optional[XGBoostPredictor] = None  # Over/Under model
+        self._xgboost_btts: Optional[XGBoostPredictor] = None  # BTTS model
         self._season_results: List[SeasonResult] = []
         self._log_file: Optional[Path] = None
         self._log_id: Optional[int] = None
@@ -147,6 +149,9 @@ class BacktestEngine:
         # Log dizini oluştur
         self._logs_dir = Path("data/logs")
         self._logs_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Veritabanını başlat (Tabloları oluştur)
+        self._get_db().initialize_db()
         
         logger.info("BacktestEngine başlatıldı")
     
@@ -264,7 +269,7 @@ class BacktestEngine:
             db.execute_query("""
                 INSERT OR REPLACE INTO predictions 
                 (date, home_team, away_team, predicted_result, actual_result,
-                 home_prob, draw_prob, away_prob, is_correct, season, division)
+                 prob_home, prob_draw, prob_away, is_correct, season, division)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 match_date,
@@ -383,6 +388,9 @@ class BacktestEngine:
         """
         Tek bir maç için bahis simülasyonu yapar.
         
+        Detaylı loglama ile her kararın nedeni açıklanır.
+        Favori koruması: %70+ ihtimalli favoriyi destekler.
+        
         Args:
             match: Maç verisi (veritabanından)
             predictions: Model tahminleri
@@ -390,6 +398,10 @@ class BacktestEngine:
         Returns:
             Dict: Bahis sonucu veya None
         """
+        # FAVORİ KORUMASI SABİTLERİ
+        FAVORITE_THRESHOLD = 0.70  # %70+ ihtimalli favori koruması
+        MIN_EV_FOR_UNDERDOG = -0.05  # Underdog için minimum EV
+        
         home_team = match['home_team']
         away_team = match['away_team']
         actual_result = match['result']  # H, D, A
@@ -408,32 +420,89 @@ class BacktestEngine:
             draw_odds = margin / predictions['draw'] if predictions['draw'] > 0 else 5
             away_odds = margin / predictions['away_win'] if predictions['away_win'] > 0 else 4
         
+        # İma edilen olasılıklar (Implied Probabilities)
+        implied_home = 1 / home_odds if home_odds > 0 else 0
+        implied_draw = 1 / draw_odds if draw_odds > 0 else 0
+        implied_away = 1 / away_odds if away_odds > 0 else 0
+        # Normalize et (marjı kaldır)
+        implied_total = implied_home + implied_draw + implied_away
+        implied_home_norm = implied_home / implied_total if implied_total > 0 else 0
+        implied_draw_norm = implied_draw / implied_total if implied_total > 0 else 0
+        implied_away_norm = implied_away / implied_total if implied_total > 0 else 0
+        
+        # EV (Expected Value) hesapla
+        ev_home = self.value_calc.calculate_ev(predictions['home_win'], home_odds)
+        ev_draw = self.value_calc.calculate_ev(predictions['draw'], draw_odds)
+        ev_away = self.value_calc.calculate_ev(predictions['away_win'], away_odds)
+        
+        # Favori analizi
+        max_prob = max(predictions['home_win'], predictions['draw'], predictions['away_win'])
+        if predictions['home_win'] == max_prob:
+            favorite = 'EV SAHİBİ'
+            favorite_code = 'H'
+            favorite_ev = ev_home
+            favorite_odds = home_odds
+        elif predictions['away_win'] == max_prob:
+            favorite = 'DEPLASMAN'
+            favorite_code = 'A'
+            favorite_ev = ev_away
+            favorite_odds = away_odds
+        else:
+            favorite = 'BERABERLİK'
+            favorite_code = 'D'
+            favorite_ev = ev_draw
+            favorite_odds = draw_odds
+        
         # En yüksek value'yu bul
         best_bet = None
         best_ev = 0
+        decision_reason = "BAHİS YOK"
         
-        # Ev sahibi analizi
-        ev_home = self.value_calc.calculate_ev(predictions['home_win'], home_odds)
+        # Value bet kontrolü
+        value_bets = []
+        
         if self.value_calc.is_value_bet(predictions['home_win'], home_odds):
-            if ev_home > best_ev:
-                best_bet = ('MS1', predictions['home_win'], home_odds, 'H')
-                best_ev = ev_home
-        
-        # Beraberlik analizi
-        ev_draw = self.value_calc.calculate_ev(predictions['draw'], draw_odds)
+            value_bets.append(('MS1', predictions['home_win'], home_odds, 'H', ev_home))
         if self.value_calc.is_value_bet(predictions['draw'], draw_odds):
-            if ev_draw > best_ev:
-                best_bet = ('MS0', predictions['draw'], draw_odds, 'D')
-                best_ev = ev_draw
-        
-        # Deplasman analizi
-        ev_away = self.value_calc.calculate_ev(predictions['away_win'], away_odds)
+            value_bets.append(('MS0', predictions['draw'], draw_odds, 'D', ev_draw))
         if self.value_calc.is_value_bet(predictions['away_win'], away_odds):
-            if ev_away > best_ev:
-                best_bet = ('MS2', predictions['away_win'], away_odds, 'A')
-                best_ev = ev_away
+            value_bets.append(('MS2', predictions['away_win'], away_odds, 'A', ev_away))
         
-        # Value bet yoksa bahis yapma
+        # FAVORİ KORUMASI: Güçlü favori varsa (%70+) onu tercih et
+        if max_prob >= FAVORITE_THRESHOLD:
+            # Güçlü favori var - EV çok negatif değilse oyna
+            if favorite_ev >= MIN_EV_FOR_UNDERDOG:
+                if favorite_code == 'H':
+                    best_bet = ('MS1', predictions['home_win'], home_odds, 'H')
+                elif favorite_code == 'A':
+                    best_bet = ('MS2', predictions['away_win'], away_odds, 'A')
+                else:
+                    best_bet = ('MS0', predictions['draw'], draw_odds, 'D')
+                best_ev = favorite_ev
+                decision_reason = f"FAVORİ KORUMASI: {favorite} (%{max_prob*100:.0f} güven)"
+            else:
+                decision_reason = f"FAVORİ KORUMASI: {favorite} EV çok düşük ({favorite_ev:.2f}), bahis yok"
+        elif value_bets:
+            # Normal value bet seçimi
+            value_bets.sort(key=lambda x: x[4], reverse=True)  # En yüksek EV
+            bet_type, prob, odds, win_condition, ev = value_bets[0]
+            best_bet = (bet_type, prob, odds, win_condition)
+            best_ev = ev
+            decision_reason = f"VALUE BET: {bet_type} (EV: {ev:.2f}, Olasılık: %{prob*100:.0f})"
+        
+        # DETAYLI LOGLAMA
+        logger.info(f"""
+[MAÇ ANALİZİ] {home_team} vs {away_team}
+------------------------------------------------
+Model Probs : EV={predictions['home_win']:.1%} | X={predictions['draw']:.1%} | DEP={predictions['away_win']:.1%}
+Implied Odds: EV={implied_home_norm:.1%} | X={implied_draw_norm:.1%} | DEP={implied_away_norm:.1%}
+Oranlar     : @{home_odds:.2f} | @{draw_odds:.2f} | @{away_odds:.2f}
+EV Değerleri: EV={ev_home:.3f} | X={ev_draw:.3f} | DEP={ev_away:.3f}
+Favori      : {favorite} (%{max_prob*100:.0f})
+>> KARAR: {decision_reason}
+------------------------------------------------""")
+        
+        # Value bet yoksa ve favori koruması da çalışmadıysa bahis yapma
         if best_bet is None and self.config.bet_on_value_only:
             return None
         
@@ -457,6 +526,9 @@ class BacktestEngine:
                 date=date,
                 actual_result=actual_result
             )
+            
+            result_status = "✅ KAZANDI" if won else "❌ KAYBETTİ"
+            logger.info(f"   {result_status} | {bet_type}@{odds:.2f} | Gerçek: {actual_result} | P/L: {transaction.pnl if transaction else 0:.2f}")
             
             return {
                 'match_id': match_id,

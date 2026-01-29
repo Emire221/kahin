@@ -9,7 +9,7 @@ Bu script her lig için sezon sezon:
 4. Bir lig bitince diğerine geçer
 
 Kullanım:
-    cd c:\Users\ahmet\Desktop\Oracle
+    cd c:/Users/ahmet/Desktop/Oracle
     python run_expanding_backtest.py
     
 veya belirli bir lig için:
@@ -74,91 +74,243 @@ def get_training_data(df: pd.DataFrame, seasons: list) -> pd.DataFrame:
 
 
 def train_models(train_df: pd.DataFrame):
-    """Modelleri eğit"""
-    # Dixon-Coles
+    """
+    3 farklı XGBoost modeli eğit:
+    - match_result: 1X2 (Kim Kazanır?)
+    - over_under: 2.5 Üst/Alt
+    - btts: Karşılıklı Gol
+    """
+    # Dixon-Coles (sadece 1X2 için)
     dixon = DixonColesModel()
     dixon.fit(train_df)
     
-    # XGBoost
-    xgb = XGBoostPredictor()
-    xgb.fit(train_df)
+    # XGBoost - Match Result (1X2)
+    xgb_match = XGBoostPredictor()
+    xgb_match.fit(train_df, target_type='match_result')
     
-    return dixon, xgb
+    # XGBoost - Over/Under (2.5 Gol)
+    xgb_ou = XGBoostPredictor()
+    xgb_ou.fit(train_df, target_type='over_under')
+    
+    # XGBoost - BTTS (Karşılıklı Gol)
+    xgb_btts = XGBoostPredictor()
+    xgb_btts.fit(train_df, target_type='btts')
+    
+    return {
+        'dixon': dixon,
+        'match_result': xgb_match,
+        'over_under': xgb_ou,
+        'btts': xgb_btts
+    }
 
 
 def simulate_season(
     test_df: pd.DataFrame,
-    dixon: DixonColesModel,
-    xgb: XGBoostPredictor,
+    models: dict,
     wallet: Wallet,
     value_calc: ValueCalculator
 ):
-    """Bir sezonu simüle et"""
+    """
+    Bir sezonu simüle et - HER MAÇ İÇİN 3 BAHİS
+    
+    Models: {'dixon': DixonColes, 'match_result': XGB, 'over_under': XGB, 'btts': XGB}
+    
+    Her maç için:
+    1. 1X2 bahsi (match_result modeli)
+    2. Over/Under bahsi (over_under modeli)
+    3. BTTS bahsi (btts modeli)
+    """
     results = []
+    STAKE = 10.0  # Sabit bahis miktarı
+    
+    dixon = models['dixon']
+    xgb_match = models['match_result']
+    xgb_ou = models['over_under']
+    xgb_btts = models['btts']
+    
+    match_counter = 0
     
     for _, match in test_df.iterrows():
         try:
+            match_counter += 1
             home = match['home_team']
             away = match['away_team']
-            actual = match['result']
+            actual_result = match['result']  # H, D, A
+            fthg = int(match.get('fthg', 0))  # Ev sahibi golü
+            ftag = int(match.get('ftag', 0))  # Deplasman golü
+            total_goals = fthg + ftag
+            match_date = str(match.get('date', ''))
             
-            # Tahmin yap
+            # Gerçek sonuçları hesapla
+            actual_over = total_goals > 2.5
+            actual_btts = (fthg > 0) and (ftag > 0)
+            
+            match_bets = []
+            
+            # ============================================
+            # 1. BAHİS: MAÇIN SONUCU (1X2)
+            # ============================================
             dc_probs = dixon.predict_match_result(home, away)
-            xgb_probs = xgb.predict_proba(home, away)
+            xgb_probs = xgb_match.predict_proba(home, away)
             
             # Ensemble (0.4 DC + 0.6 XGB)
-            ensemble = {
-                'home_win': dc_probs['home_win'] * 0.4 + xgb_probs['home_win'] * 0.6,
-                'draw': dc_probs['draw'] * 0.4 + xgb_probs['draw'] * 0.6,
-                'away_win': dc_probs['away_win'] * 0.4 + xgb_probs['away_win'] * 0.6,
+            ensemble_1x2 = {
+                'home_win': dc_probs['home_win'] * 0.4 + xgb_probs.get('home_win', 0.33) * 0.6,
+                'draw': dc_probs['draw'] * 0.4 + xgb_probs.get('draw', 0.33) * 0.6,
+                'away_win': dc_probs['away_win'] * 0.4 + xgb_probs.get('away_win', 0.33) * 0.6,
             }
             
-            # En yüksek olasılık
-            pred = max(ensemble, key=ensemble.get)
+            # En yüksek olasılık ile bahis yap
+            best_1x2 = max(ensemble_1x2, key=ensemble_1x2.get)
+            best_prob_1x2 = ensemble_1x2[best_1x2]
             pred_map = {'home_win': 'H', 'draw': 'D', 'away_win': 'A'}
-            predicted = pred_map[pred]
+            bet_type_map = {'home_win': 'MS1', 'draw': 'MS0', 'away_win': 'MS2'}
+            predicted_1x2 = pred_map[best_1x2]
             
-            # Value bahis kontrolü
-            odds_map = {
-                'H': match.get('home_odds'),
-                'D': match.get('draw_odds'),
-                'A': match.get('away_odds')
-            }
+            # Oran hesapla (margin 1.05)
+            odds_1x2 = 1.05 / best_prob_1x2 if best_prob_1x2 > 0 else 2.0
+            won_1x2 = (actual_result == predicted_1x2)
             
-            bet_result = None
-            for outcome, prob_key in [('H', 'home_win'), ('D', 'draw'), ('A', 'away_win')]:
-                odds = odds_map.get(outcome)
-                if odds and odds > 0:
-                    value = value_calc.calculate_value(ensemble[prob_key], odds)
-                    if value and value['has_value']:
-                        # Bahis yap
-                        won = (actual == outcome)
-                        pnl = wallet.place_bet(won, odds)
-                        bet_result = {
-                            'date': str(match.get('date', '')),
-                            'match': f"{home} vs {away}",
-                            'bet_on': outcome,
-                            'odds': odds,
-                            'probability': ensemble[prob_key],
-                            'value': value['value'],
-                            'won': won,
-                            'pnl': pnl,
-                            'balance': wallet.balance
-                        }
-                        break
+            # Wallet üzerinden bahis yap
+            tx_1x2 = wallet.place_bet(
+                match_id=match_counter,
+                bet_type=bet_type_map[best_1x2],
+                odds=odds_1x2,
+                won=won_1x2,
+                predicted_prob=best_prob_1x2,
+                home_team=home,
+                away_team=away,
+                date=match_date,
+                actual_result=actual_result
+            )
+            pnl_1x2 = tx_1x2.pnl if tx_1x2 else 0
+            
+            match_bets.append({
+                'type': '1X2',
+                'prediction': predicted_1x2,
+                'probability': best_prob_1x2,
+                'odds': odds_1x2,
+                'won': won_1x2,
+                'pnl': pnl_1x2
+            })
+            
+            # ============================================
+            # 2. BAHİS: OVER/UNDER 2.5
+            # ============================================
+            ou_probs = xgb_ou.predict_proba(home, away)
+            over_prob = ou_probs.get('over', 0.5)
+            under_prob = ou_probs.get('under', 0.5)
+            
+            # En yüksek olasılık ile bahis yap
+            if over_prob >= under_prob:
+                predicted_ou = 'OVER'
+                best_prob_ou = over_prob
+                won_ou = actual_over
+                bet_type_ou = 'O2.5'
+            else:
+                predicted_ou = 'UNDER'
+                best_prob_ou = under_prob
+                won_ou = not actual_over
+                bet_type_ou = 'U2.5'
+            
+            odds_ou = 1.05 / best_prob_ou if best_prob_ou > 0 else 2.0
+            
+            tx_ou = wallet.place_bet(
+                match_id=match_counter,
+                bet_type=bet_type_ou,
+                odds=odds_ou,
+                won=won_ou,
+                predicted_prob=best_prob_ou,
+                home_team=home,
+                away_team=away,
+                date=match_date,
+                actual_result=f"{fthg}-{ftag}"
+            )
+            pnl_ou = tx_ou.pnl if tx_ou else 0
+            
+            match_bets.append({
+                'type': 'O/U 2.5',
+                'prediction': predicted_ou,
+                'probability': best_prob_ou,
+                'odds': odds_ou,
+                'won': won_ou,
+                'pnl': pnl_ou
+            })
+            
+            # ============================================
+            # 3. BAHİS: BTTS (KARŞILIKLI GOL)
+            # ============================================
+            btts_probs = xgb_btts.predict_proba(home, away)
+            btts_yes_prob = btts_probs.get('yes', 0.5)
+            btts_no_prob = btts_probs.get('no', 0.5)
+            
+            # En yüksek olasılık ile bahis yap
+            if btts_yes_prob >= btts_no_prob:
+                predicted_btts = 'VAR'
+                best_prob_btts = btts_yes_prob
+                won_btts = actual_btts
+                bet_type_btts = 'BTTS_Y'
+            else:
+                predicted_btts = 'YOK'
+                best_prob_btts = btts_no_prob
+                won_btts = not actual_btts
+                bet_type_btts = 'BTTS_N'
+            
+            odds_btts = 1.05 / best_prob_btts if best_prob_btts > 0 else 2.0
+            
+            tx_btts = wallet.place_bet(
+                match_id=match_counter,
+                bet_type=bet_type_btts,
+                odds=odds_btts,
+                won=won_btts,
+                predicted_prob=best_prob_btts,
+                home_team=home,
+                away_team=away,
+                date=match_date,
+                actual_result=f"BTTS:{'Y' if actual_btts else 'N'}"
+            )
+            pnl_btts = tx_btts.pnl if tx_btts else 0
+            
+            match_bets.append({
+                'type': 'BTTS',
+                'prediction': predicted_btts,
+                'probability': best_prob_btts,
+                'odds': odds_btts,
+                'won': won_btts,
+                'pnl': pnl_btts
+            })
+            
+            # DETAYLI LOGLAMA
+            total_pnl = pnl_1x2 + pnl_ou + pnl_btts
+            wins_count = sum(1 for b in match_bets if b['won'])
+            
+            logger.info(f"""
+[MAÇ ANALİZİ] {home} vs {away} (Skor: {fthg}-{ftag})
+------------------------------------------------
+1. 1X2 Tahmini : {predicted_1x2} ({best_prob_1x2:.1%}) @{odds_1x2:.2f} → {'✅' if won_1x2 else '❌'}
+2. 2.5 Üst/Alt : {predicted_ou} ({best_prob_ou:.1%}) @{odds_ou:.2f} → {'✅' if won_ou else '❌'}
+3. KG Var/Yok  : {predicted_btts} ({best_prob_btts:.1%}) @{odds_btts:.2f} → {'✅' if won_btts else '❌'}
+------------------------------------------------
+>> ÖZET: {wins_count}/3 doğru | P/L: {total_pnl:+.2f} | Bakiye: {wallet.balance:.2f}
+------------------------------------------------""")
             
             results.append({
-                'date': str(match.get('date', '')),
+                'date': match_date,
                 'home': home,
                 'away': away,
-                'predicted': predicted,
-                'actual': actual,
-                'correct': predicted == actual,
-                'bet': bet_result
+                'score': f"{fthg}-{ftag}",
+                'actual_result': actual_result,
+                'actual_over': actual_over,
+                'actual_btts': actual_btts,
+                'bets': match_bets,
+                'total_pnl': total_pnl,
+                'balance': wallet.balance
             })
             
         except Exception as e:
-            logger.debug(f"Maç hatası: {e}")
+            logger.error(f"Maç hatası: {home} vs {away}: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             continue
     
     return results
@@ -219,27 +371,32 @@ def run_league_backtest(division: str, output_dir: Path):
         print(f"    Eğitim: {len(train_df)} maç")
         print(f"    Test: {len(test_df)} maç")
         
-        # Modelleri eğit
+        # Modelleri eğit (3 farklı model)
         try:
-            dixon, xgb = train_models(train_df)
-            print(f"    ✓ Modeller eğitildi")
+            models = train_models(train_df)
+            print(f"    ✓ 4 Model eğitildi: Dixon-Coles + 3 XGBoost (1X2, O/U, BTTS)")
         except Exception as e:
             print(f"    ✗ Eğitim hatası: {e}")
             continue
         
-        # Simülasyon
+        # Simülasyon (her maç için 3 bahis)
         season_start_balance = wallet.balance
-        results = simulate_season(test_df, dixon, xgb, wallet, value_calc)
+        results = simulate_season(test_df, models, wallet, value_calc)
         
-        # İstatistikler
-        total_predictions = len(results)
-        correct = sum(1 for r in results if r['correct'])
-        accuracy = (correct / total_predictions * 100) if total_predictions > 0 else 0
+        # İstatistikler (yeni yapıya göre)
+        total_matches = len(results)
+        total_bets = total_matches * 3  # Her maç için 3 bahis
         
-        bets = [r['bet'] for r in results if r['bet']]
-        total_bets = len(bets)
-        wins = sum(1 for b in bets if b['won'])
-        hit_rate = (wins / total_bets * 100) if total_bets > 0 else 0
+        # Tüm bahisleri topla
+        all_bets = []
+        for r in results:
+            all_bets.extend(r.get('bets', []))
+        
+        total_wins = sum(1 for b in all_bets if b['won'])
+        hit_rate = (total_wins / total_bets * 100) if total_bets > 0 else 0
+        
+        # 1X2 doğruluk
+        correct_1x2 = sum(1 for r in results for b in r.get('bets', []) if b['type'] == '1X2' and b['won'])
         
         season_pnl = wallet.balance - season_start_balance
         total_staked = total_bets * 10
@@ -250,11 +407,11 @@ def run_league_backtest(division: str, output_dir: Path):
             'league': division,
             'season': test_season,
             'train_seasons': train_seasons,
-            'matches_tested': total_predictions,
-            'predictions_correct': correct,
-            'accuracy': round(accuracy, 2),
-            'bets_placed': total_bets,
-            'bets_won': wins,
+            'matches_tested': total_matches,
+            'total_bets': total_bets,
+            'bets_won': total_wins,
+            '1x2_correct': correct_1x2,
+            '1x2_accuracy': round(correct_1x2 / total_matches * 100, 2) if total_matches > 0 else 0,
             'hit_rate': round(hit_rate, 2),
             'total_staked': total_staked,
             'pnl': round(season_pnl, 2),
@@ -274,8 +431,11 @@ def run_league_backtest(division: str, output_dir: Path):
         # Ekrana yazdır
         print(f"\n    📊 SEZON SONUCU: {test_season}")
         print(f"    ─────────────────────────────")
-        print(f"    Tahmin Doğruluğu: {correct}/{total_predictions} ({accuracy:.1f}%)")
-        print(f"    Bahis: {total_bets}, Kazanan: {wins} ({hit_rate:.1f}%)")
+        if total_matches > 0:
+            print(f"    1X2 Doğruluğu: {correct_1x2}/{total_matches} ({correct_1x2/total_matches*100:.1f}%)")
+        else:
+            print(f"    1X2 Doğruluğu: 0/0 (Veri yok)")
+        print(f"    Toplam Bahis: {total_bets}, Kazanan: {total_wins} ({hit_rate:.1f}%)")
         print(f"    PnL: {season_pnl:+.2f} TL, ROI: {roi:+.2f}%")
         print(f"    Bakiye: {wallet.balance:.2f} TL")
         print(f"    📄 Rapor: {report_file.name}")
@@ -285,7 +445,7 @@ def run_league_backtest(division: str, output_dir: Path):
     print(f"📈 {division} LİGİ ÖZET")
     print(f"{'='*60}")
     
-    total_bets_all = sum(s['bets_placed'] for s in league_summary)
+    total_bets_all = sum(s.get('total_bets', 0) for s in league_summary)
     total_wins_all = sum(s['bets_won'] for s in league_summary)
     total_pnl_all = sum(s['pnl'] for s in league_summary)
     total_staked_all = sum(s['total_staked'] for s in league_summary)

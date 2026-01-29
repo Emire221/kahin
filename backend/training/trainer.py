@@ -287,18 +287,23 @@ class ModelTrainer:
         self,
         divisions: Optional[List[str]] = None,
         tier1_only: bool = True,
-        save: bool = True
+        save: bool = True,
+        train_multi_target: bool = True
     ) -> Dict[str, Dict[str, Any]]:
         """
         Lig bazlı model eğitimi yapar.
         
         Her lig için ayrı XGBoost modeli eğitir ve kaydeder.
-        Tier 2 verileri, Tier 1 liglerdeki takımların geçmişi olarak kullanılır.
+        train_multi_target=True ise her lig için 3 model eğitir:
+            - match_result: 1X2 tahmini (H/D/A)
+            - over_under: 2.5 Gol Üst/Alt
+            - btts: KG Var/Yok
         
         Args:
             divisions: Eğitilecek lig kodları listesi (None ise tüm Tier 1 ligler)
             tier1_only: Sadece Tier 1 ligleri eğit
             save: Modelleri kaydet
+            train_multi_target: Her lig için 3 model eğit (1X2, Over/Under, BTTS)
             
         Returns:
             Dict: Lig bazlı eğitim raporları
@@ -309,12 +314,15 @@ class ModelTrainer:
             >>> trainer.train_by_league()  # Tüm Tier 1 ligler
         """
         logger.info("=" * 50)
-        logger.info("LİG BAZLI EĞİTİM BAŞLIYOR")
+        logger.info("LİG BAZLI ÇOKLU MODEL EĞİTİMİ BAŞLIYOR")
         logger.info("=" * 50)
         
         # Tier sabitleri
         TIER_1_LEAGUES = {'E0', 'D1', 'I1', 'SP1', 'F1', 'T1', 'N1', 'B1', 'P1'}
         TIER_2_LEAGUES = {'E1', 'D2', 'I2', 'SP2', 'F2'}
+        
+        # Eğitilecek hedefler
+        TARGET_TYPES = ['match_result', 'over_under', 'btts'] if train_multi_target else ['match_result']
         
         # Veritabanından tüm veriyi çek
         db = self._get_db()
@@ -344,6 +352,7 @@ class ModelTrainer:
             raise ValueError("Eğitilecek lig bulunamadı!")
         
         logger.info(f"Eğitilecek ligler ({len(target_leagues)}): {sorted(target_leagues)}")
+        logger.info(f"Hedefler: {TARGET_TYPES}")
         
         # Tier 2 verisini hazırla (her Tier 1 eğitiminde context olarak kullanılacak)
         tier2_df = full_df[full_df['division'].isin(TIER_2_LEAGUES)]
@@ -352,7 +361,9 @@ class ModelTrainer:
         league_reports = {}
         
         for division in sorted(target_leagues):
-            logger.info(f"\n--- {division} Ligi Eğitimi ---")
+            logger.info(f"\n{'='*30}")
+            logger.info(f"--- {division} Ligi Çoklu Model Eğitimi ---")
+            logger.info(f"{'='*30}")
             
             # Bu lig verisini çek
             league_df = full_df[full_df['division'] == division]
@@ -375,74 +386,110 @@ class ModelTrainer:
             # Tarihe göre sırala
             combined_df = combined_df.sort_values('date')
             
-            # XGBoost modeli eğit
-            try:
-                xgb_model = XGBoostPredictor(
-                    n_estimators=200,
-                    max_depth=6,
-                    learning_rate=0.05,
-                    use_calibration=True
-                )
-                
-                start_time = datetime.now()
-                xgb_model.fit(combined_df)
-                training_time = (datetime.now() - start_time).total_seconds()
-                
-                # Kaydet
-                if save:
-                    model_filename = f"xgboost_{division}.pkl"
-                    model_path = self.models_dir / model_filename
-                    xgb_model.save(model_path)
-                    logger.info(f"Model kaydedildi: {model_path}")
-                
-                # Rapor
-                league_reports[division] = {
-                    'training_date': datetime.now().isoformat(),
-                    'training_time_seconds': round(training_time, 2),
-                    'num_matches': len(combined_df),
-                    'num_teams': len(xgb_model._team_stats),
-                    'feature_count': len(xgb_model.feature_names),
-                    'tier2_matches': len(combined_df) - len(league_df),
-                }
-                
-                logger.info(f"{division} eğitimi tamamlandı ({training_time:.1f}s)")
-                
-            except Exception as e:
-                logger.error(f"{division} eğitimi başarısız: {e}")
-                league_reports[division] = {'error': str(e)}
+            # Her hedef için model eğit
+            league_reports[division] = {'models': {}}
+            
+            for target_type in TARGET_TYPES:
+                try:
+                    logger.info(f"\n[{division}] {target_type.upper()} modeli eğitiliyor...")
+                    
+                    xgb_model = XGBoostPredictor(
+                        n_estimators=200,
+                        max_depth=6,
+                        learning_rate=0.05,
+                        use_calibration=True
+                    )
+                    
+                    start_time = datetime.now()
+                    xgb_model.fit(combined_df, target_type=target_type)
+                    training_time = (datetime.now() - start_time).total_seconds()
+                    
+                    # Kaydet
+                    if save:
+                        model_filename = f"xgboost_{division}_{target_type}.pkl"
+                        model_path = self.models_dir / model_filename
+                        xgb_model.save(model_path)
+                        logger.info(f"Model kaydedildi: {model_path}")
+                    
+                    # Rapor
+                    league_reports[division]['models'][target_type] = {
+                        'training_time_seconds': round(training_time, 2),
+                        'num_matches': len(combined_df),
+                        'num_teams': len(xgb_model._team_stats),
+                        'feature_count': len(xgb_model.feature_names),
+                    }
+                    
+                    logger.info(f"[{division}] {target_type} eğitimi tamamlandı ({training_time:.1f}s)")
+                    
+                except Exception as e:
+                    logger.error(f"[{division}] {target_type} eğitimi başarısız: {e}")
+                    league_reports[division]['models'][target_type] = {'error': str(e)}
+            
+            # Lig özet bilgisi
+            league_reports[division]['training_date'] = datetime.now().isoformat()
+            league_reports[division]['num_matches'] = len(combined_df)
+            league_reports[division]['tier2_matches'] = len(combined_df) - len(league_df)
         
         # Genel raporu kaydet
         if save:
-            report_path = self.models_dir / "multi_league_report.json"
+            report_path = self.models_dir / "multi_league_multi_target_report.json"
             with open(report_path, 'w', encoding='utf-8') as f:
                 json.dump(league_reports, f, indent=2, ensure_ascii=False)
             logger.info(f"Çoklu lig raporu kaydedildi: {report_path}")
         
         logger.info("=" * 50)
-        logger.info(f"LİG BAZLI EĞİTİM TAMAMLANDI ({len(league_reports)} lig)")
+        logger.info(f"LİG BAZLI ÇOKLU MODEL EĞİTİMİ TAMAMLANDI ({len(league_reports)} lig)")
         logger.info("=" * 50)
         
         return league_reports
     
-    def load_league_model(self, division: str) -> Optional[XGBoostPredictor]:
+    def load_league_model(self, division: str, target_type: str = 'match_result') -> Optional[XGBoostPredictor]:
         """
         Belirli bir lig için eğitilmiş modeli yükler.
         
         Args:
             division: Lig kodu (E0, T1, vb.)
+            target_type: Model hedefi ('match_result', 'over_under', 'btts')
             
         Returns:
             XGBoostPredictor veya None
         """
-        model_path = self.models_dir / f"xgboost_{division}.pkl"
+        model_path = self.models_dir / f"xgboost_{division}_{target_type}.pkl"
+        
+        # Backward compatibility: eski format varsa onu dene
+        if not model_path.exists():
+            old_path = self.models_dir / f"xgboost_{division}.pkl"
+            if old_path.exists() and target_type == 'match_result':
+                model_path = old_path
         
         if model_path.exists():
             model = XGBoostPredictor.load(model_path)
-            logger.info(f"{division} modeli yüklendi")
+            logger.info(f"{division} {target_type} modeli yüklendi")
             return model
         else:
-            logger.warning(f"{division} modeli bulunamadı: {model_path}")
+            logger.warning(f"{division} {target_type} modeli bulunamadı: {model_path}")
             return None
+    
+    def load_league_models(self, division: str) -> Dict[str, XGBoostPredictor]:
+        """
+        Bir lig için tüm modelleri (match_result, over_under, btts) yükler.
+        
+        Args:
+            division: Lig kodu (E0, T1, vb.)
+            
+        Returns:
+            Dict[str, XGBoostPredictor]: Hedef tipine göre model dict'i
+        """
+        models = {}
+        target_types = ['match_result', 'over_under', 'btts']
+        
+        for target_type in target_types:
+            model = self.load_league_model(division, target_type)
+            if model:
+                models[target_type] = model
+        
+        logger.info(f"{division} için {len(models)} model yüklendi: {list(models.keys())}")
+        return models
     
     def load_models(self) -> None:
         """Kaydedilmiş modelleri yükler."""

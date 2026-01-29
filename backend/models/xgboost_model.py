@@ -482,6 +482,9 @@ class XGBoostPredictor:
         
         return np.array(features)
     
+    # Çaylak cezası sabiti: Bilinmeyen takımlara lig ortalamasının bu kadarı atanır
+    ROOKIE_PENALTY = 0.70
+    
     def _calculate_rolling_stats(self, team: str, n_matches: int = 5) -> Dict[str, float]:
         """
         Takımın son N maçının rolling istatistiklerini hesaplar.
@@ -492,16 +495,26 @@ class XGBoostPredictor:
             
         Returns:
             Dict: Rolling ortalamalar
+            
+        Note:
+            Bilinmeyen takımlara (geçmiş verisi olmayan) lig ortalamasının
+            %70'i kadar değer atanır (Çaylak Cezası / Rookie Penalty).
+            Bu sayede model yeni takımları "tehlikeli" değil "zayıf" olarak algılar.
         """
         history = self._team_match_history.get(team, [])
         recent = history[-n_matches:] if len(history) >= n_matches else history
         
+        # Lig ortalaması değerleri
+        league_defaults = {
+            'avg_shots_on_target': 4.0,
+            'avg_corners': 5.0,
+            'aggression_index': 2.0,
+        }
+        
         if not recent:
-            return {
-                'avg_shots_on_target': 4.0,  # Varsayılan değerler
-                'avg_corners': 5.0,
-                'aggression_index': 2.0,
-            }
+            # ÇAYLAK CEZASI: Bilinmeyen takımlara lig ortalamasının %70'i
+            logger.debug(f"ÇAYLAK CEZASI: {team} için geçmiş veri yok, lig ortalamasının %{self.ROOKIE_PENALTY*100:.0f}'i atanıyor")
+            return {k: v * self.ROOKIE_PENALTY for k, v in league_defaults.items()}
         
         shots_on_target = [m.get('shots_on_target', 4) for m in recent]
         corners = [m.get('corners', 5) for m in recent]
@@ -628,18 +641,26 @@ class XGBoostPredictor:
         home_goals_col: str = 'fthg',
         away_goals_col: str = 'ftag',
         result_col: str = 'result',
-        date_col: str = 'date'
+        date_col: str = 'date',
+        target_type: str = 'match_result'
     ) -> "XGBoostPredictor":
         """
         Modeli eğitir.
         
         Args:
             df: Maç verileri DataFrame
+            target_type: Hedef tipi - 'match_result' (1X2), 'over_under' (2.5 Gol), 'btts' (KG Var)
             
         Returns:
             self: Eğitilmiş model
+            
+        Note:
+            - match_result: Multiclass classification (H/D/A)
+            - over_under: Binary classification (1: Üst, 0: Alt)
+            - btts: Binary classification (1: Var, 0: Yok)
         """
-        logger.info(f"XGBoost eğitimi başlıyor: {len(df)} maç")
+        self._target_type = target_type
+        logger.info(f"XGBoost eğitimi başlıyor: {len(df)} maç, hedef: {target_type}")
         
         # İstatistikleri sıfırla
         self._team_stats.clear()
@@ -657,6 +678,18 @@ class XGBoostPredictor:
         # Eğitim verisi sakla
         self._training_df = df.copy()
         
+        # Hedef sütununu hazırla (target_type'a göre)
+        if target_type == 'over_under':
+            # 2.5 Gol Üst: (FTHG + FTAG) > 2.5 ise 1, değilse 0
+            df = df.copy()
+            df['_target'] = ((df[home_goals_col] + df[away_goals_col]) > 2.5).astype(int)
+            result_col = '_target'
+        elif target_type == 'btts':
+            # KG Var: (FTHG > 0) AND (FTAG > 0) ise 1, değilse 0
+            df = df.copy()
+            df['_target'] = ((df[home_goals_col] > 0) & (df[away_goals_col] > 0)).astype(int)
+            result_col = '_target'
+        
         # Veri hazırla
         X, y = self._prepare_training_data(
             df, home_col, away_col, 
@@ -667,23 +700,40 @@ class XGBoostPredictor:
         # Label encode
         y_encoded = self._label_encoder.fit_transform(y)
         
-        # XGBoost modelini oluştur
-        self._base_model = xgb.XGBClassifier(
-            n_estimators=self.n_estimators,
-            max_depth=self.max_depth,
-            learning_rate=self.learning_rate,
-            min_child_weight=self.min_child_weight,
-            subsample=self.subsample,
-            colsample_bytree=self.colsample_bytree,
-            objective='multi:softprob',
-            num_class=3,
-            random_state=self.random_state,
-            use_label_encoder=False,
-            eval_metric='mlogloss',
-            verbosity=0
-        )
+        # XGBoost modelini oluştur (target_type'a göre objective seç)
+        if target_type == 'match_result':
+            # Multiclass: 1X2 (H/D/A)
+            self._base_model = xgb.XGBClassifier(
+                n_estimators=self.n_estimators,
+                max_depth=self.max_depth,
+                learning_rate=self.learning_rate,
+                min_child_weight=self.min_child_weight,
+                subsample=self.subsample,
+                colsample_bytree=self.colsample_bytree,
+                objective='multi:softprob',
+                num_class=3,
+                random_state=self.random_state,
+                use_label_encoder=False,
+                eval_metric='mlogloss',
+                verbosity=0
+            )
+        else:
+            # Binary: Over/Under veya BTTS
+            self._base_model = xgb.XGBClassifier(
+                n_estimators=self.n_estimators,
+                max_depth=self.max_depth,
+                learning_rate=self.learning_rate,
+                min_child_weight=self.min_child_weight,
+                subsample=self.subsample,
+                colsample_bytree=self.colsample_bytree,
+                objective='binary:logistic',
+                random_state=self.random_state,
+                use_label_encoder=False,
+                eval_metric='logloss',
+                verbosity=0
+            )
         
-        logger.info("Model eğitiliyor...")
+        logger.info(f"Model eğitiliyor... (objective: {self._base_model.get_params()['objective']})")
         
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -736,7 +786,10 @@ class XGBoostPredictor:
             match_date: Maç tarihi
             
         Returns:
-            Dict: {'home_win': float, 'draw': float, 'away_win': float}
+            Dict: 
+                - match_result: {'home_win': float, 'draw': float, 'away_win': float}
+                - over_under: {'over': float, 'under': float}
+                - btts: {'yes': float, 'no': float}
         """
         if not self.is_fitted:
             raise ValueError("Model henüz eğitilmedi. Önce fit() çağırın.")
@@ -756,19 +809,48 @@ class XGBoostPredictor:
         # Tahmin
         proba = self.model.predict_proba(X)[0]
         
-        # Label mapping (A, D, H sıralaması)
-        classes = self._label_encoder.classes_
-        result = {}
+        # Target type'a göre sonuç döndür
+        target_type = getattr(self, '_target_type', 'match_result')
         
-        for i, cls in enumerate(classes):
-            if cls == 'H':
-                result['home_win'] = round(float(proba[i]), 4)
-            elif cls == 'D':
-                result['draw'] = round(float(proba[i]), 4)
-            elif cls == 'A':
-                result['away_win'] = round(float(proba[i]), 4)
-        
-        return result
+        if target_type == 'over_under':
+            # Binary: [0: Alt, 1: Üst]
+            if len(proba) == 2:
+                return {
+                    'under': round(float(proba[0]), 4),
+                    'over': round(float(proba[1]), 4)
+                }
+            else:
+                # Tek probability döndüyse
+                return {
+                    'under': round(float(1 - proba[0]), 4),
+                    'over': round(float(proba[0]), 4)
+                }
+        elif target_type == 'btts':
+            # Binary: [0: Yok, 1: Var]
+            if len(proba) == 2:
+                return {
+                    'no': round(float(proba[0]), 4),
+                    'yes': round(float(proba[1]), 4)
+                }
+            else:
+                return {
+                    'no': round(float(1 - proba[0]), 4),
+                    'yes': round(float(proba[0]), 4)
+                }
+        else:
+            # Multiclass: match_result (H/D/A)
+            classes = self._label_encoder.classes_
+            result = {}
+            
+            for i, cls in enumerate(classes):
+                if cls == 'H':
+                    result['home_win'] = round(float(proba[i]), 4)
+                elif cls == 'D':
+                    result['draw'] = round(float(proba[i]), 4)
+                elif cls == 'A':
+                    result['away_win'] = round(float(proba[i]), 4)
+            
+            return result
     
     def predict(
         self,
@@ -860,6 +942,7 @@ class XGBoostPredictor:
             'last_match_dates': self._last_match_dates,
             'feature_names': self.feature_names,
             'is_fitted': self.is_fitted,
+            'target_type': getattr(self, '_target_type', 'match_result'),
             'params': {
                 'n_estimators': self.n_estimators,
                 'max_depth': self.max_depth,
@@ -899,8 +982,9 @@ class XGBoostPredictor:
         predictor._last_match_dates = model_data['last_match_dates']
         predictor.feature_names = model_data['feature_names']
         predictor.is_fitted = model_data['is_fitted']
+        predictor._target_type = model_data.get('target_type', 'match_result')
         
-        logger.info(f"XGBoost modeli yüklendi: {path}")
+        logger.info(f"XGBoost modeli yüklendi: {path} (target: {predictor._target_type})")
         
         return predictor
     

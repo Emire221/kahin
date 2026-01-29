@@ -147,18 +147,25 @@ CREATE TABLE IF NOT EXISTS fixtures (
 SCHEMA_PREDICTIONS = """
 CREATE TABLE IF NOT EXISTS predictions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    match_id INTEGER NOT NULL,
+    match_id INTEGER,
+    date TEXT,
+    home_team TEXT,
+    away_team TEXT,
     prob_home REAL NOT NULL,
     prob_draw REAL NOT NULL,
     prob_away REAL NOT NULL,
+    predicted_result TEXT,
+    actual_result TEXT,
     predicted_home_goals INTEGER,
     predicted_away_goals INTEGER,
     ai_risk_analysis TEXT,
     is_value INTEGER NOT NULL DEFAULT 0,
     confidence_score REAL NOT NULL DEFAULT 0.0,
+    is_correct INTEGER,
     bet_result TEXT CHECK(bet_result IN ('win', 'lose', 'void', NULL)),
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (match_id) REFERENCES fixtures(id) ON DELETE CASCADE
+    season TEXT,
+    division TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -166,12 +173,17 @@ SCHEMA_WALLET_SIMULATION = """
 CREATE TABLE IF NOT EXISTS wallet_simulation (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,
-    match_id INTEGER NOT NULL,
+    match_id INTEGER,
+    home_team TEXT,
+    away_team TEXT,
     bet_type TEXT NOT NULL,
     stake REAL NOT NULL,
     odds REAL NOT NULL,
+    result TEXT,
     pnl REAL NOT NULL,
-    balance REAL NOT NULL,
+    balance REAL,
+    balance_after REAL,
+    season TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
