@@ -107,6 +107,15 @@ class TeamStats:
         return points
 
 
+def default_elo_rating():
+    """Varsayılan Elo puanı (Pickle uyumluluğu için lambda yerine fonksiyon)"""
+    return 1500.0
+
+def default_referee_stats():
+    """Varsayılan hakem istatistikleri (Pickle uyumluluğu için lambda yerine fonksiyon)"""
+    return {'matches': 0, 'home_wins': 0}
+
+
 class EloCalculator:
     """
     Elo Rating sistemi.
@@ -123,7 +132,7 @@ class EloCalculator:
         """
         self.k_factor = k_factor
         self.home_advantage = home_advantage
-        self.ratings: Dict[str, float] = defaultdict(lambda: 1500.0)
+        self.ratings: Dict[str, float] = defaultdict(default_elo_rating)
     
     def expected_score(self, rating_a: float, rating_b: float) -> float:
         """Beklenen skor (0-1 arası)"""
@@ -289,7 +298,7 @@ class XGBoostPredictor:
         
         # Rolling Averages için geçmiş istatistikler (YENİ)
         self._team_match_history: Dict[str, List[Dict]] = defaultdict(list)  # Takım bazlı maç geçmişi
-        self._referee_stats: Dict[str, Dict] = defaultdict(lambda: {'matches': 0, 'home_wins': 0})  # Hakem istatistikleri
+        self._referee_stats: Dict[str, Dict] = defaultdict(default_referee_stats)  # Hakem istatistikleri
         self._team_tiers: Dict[str, int] = {}  # Takımın hangi tier'da olduğu
         
         # Eğitim verisi (tahminde kullanmak için)
