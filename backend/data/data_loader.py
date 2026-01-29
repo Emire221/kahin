@@ -69,6 +69,8 @@ class DataLoader:
         'FTHG': 'fthg',
         'FTAG': 'ftag',
         'FTR': 'result',
+        'Div': 'division',  # Lig kodu
+        'Referee': 'referee',  # Hakem
         
         # Alternatif isimler
         'Home': 'home_team',
@@ -76,6 +78,11 @@ class DataLoader:
         'HG': 'fthg',
         'AG': 'ftag',
         'Res': 'result',
+        
+        # İlk yarı skorları
+        'HTHG': 'hthg',
+        'HTAG': 'htag',
+        'HTR': 'htr',
         
         # İstatistik sütunları
         'HS': 'hs',
@@ -91,14 +98,36 @@ class DataLoader:
         'HR': 'hr',
         'AR': 'ar',
         
-        # Bahis oranları
+        # Bahis oranları - Temel
         'B365H': 'home_odds',
         'B365D': 'draw_odds',
         'B365A': 'away_odds',
-        'BbAvH': 'home_odds',  # Alternatif
+        'BbAvH': 'home_odds',
         'BbAvD': 'draw_odds',
         'BbAvA': 'away_odds',
+        
+        # Genişletilmiş oranlar (stats JSON'a)
+        'AvgH': 'avgh',
+        'AvgD': 'avgd',
+        'AvgA': 'avga',
+        'MaxH': 'maxh',
+        'MaxD': 'maxd',
+        'MaxA': 'maxa',
+        'B365CH': 'b365ch',
+        'B365CD': 'b365cd',
+        'B365CA': 'b365ca',
+        'B365>2.5': 'b365>2.5',
+        'B365<2.5': 'b365<2.5',
+        'AHh': 'ahh',
+        'B365AHH': 'b365ahh',
+        'B365AHA': 'b365aha',
     }
+    
+    # Tier 1 Ligleri (Ana Ligler) - Yüksek kalite veri, bahis hedefi
+    TIER_1_LEAGUES = {'E0', 'D1', 'I1', 'SP1', 'F1', 'T1', 'N1', 'B1', 'P1'}
+    
+    # Tier 2 Ligleri (Alt Ligler) - Geçmiş veri, terfi/küme düşme takibi için
+    TIER_2_LEAGUES = {'E1', 'D2', 'I2', 'SP2', 'F2'}
     
     # Tarih formatları (football-data.co.uk çeşitli formatlar kullanır)
     DATE_FORMATS = [
@@ -177,6 +206,83 @@ class DataLoader:
             self.db_manager = get_database()
             self._owns_db_manager = True
         return self.db_manager
+    
+    def parse_filename(self, filename: str) -> Dict[str, Any]:
+        """
+        Dosya adından lig kodu ve sezon bilgisi çıkarır.
+        
+        Format: KOD_SEZON.csv (örn: E0_2023-2024.csv, T1_2122.csv)
+        
+        Args:
+            filename: CSV dosya adı
+            
+        Returns:
+            Dict: {'division': str, 'season': str, 'tier': int}
+            
+        Example:
+            >>> loader.parse_filename("E0_2023-2024.csv")
+            {'division': 'E0', 'season': '2023-2024', 'tier': 1}
+            >>> loader.parse_filename("D2_2122.csv")
+            {'division': 'D2', 'season': '2021-2022', 'tier': 2}
+        """
+        result = {'division': None, 'season': None, 'tier': 1}
+        
+        # Dosya adından uzantıyı çıkar
+        name = Path(filename).stem
+        
+        # Pattern 1: KOD_YYYY-YYYY (örn: E0_2023-2024)
+        match = re.match(r'^([A-Z]+\d?)_(\d{4})-(\d{4})$', name)
+        if match:
+            result['division'] = match.group(1)
+            result['season'] = f"{match.group(2)}-{match.group(3)}"
+            result['tier'] = self.get_tier(result['division'])
+            return result
+        
+        # Pattern 2: KOD_YYZZ (örn: E0_2324 -> 2023-2024)
+        match = re.match(r'^([A-Z]+\d?)_(\d{2})(\d{2})$', name)
+        if match:
+            result['division'] = match.group(1)
+            year1 = int(match.group(2))
+            year2 = int(match.group(3))
+            
+            # Yüzyılı belirle (90-99: 1990s, 00-24: 2000s)
+            century1 = 1900 if year1 >= 90 else 2000
+            century2 = 1900 if year2 >= 90 else 2000
+            
+            result['season'] = f"{century1 + year1}-{century2 + year2}"
+            result['tier'] = self.get_tier(result['division'])
+            return result
+        
+        # Pattern 3: KOD_YYYY (tek yıl, örn: E0_2023)
+        match = re.match(r'^([A-Z]+\d?)_(\d{4})$', name)
+        if match:
+            result['division'] = match.group(1)
+            year = int(match.group(2))
+            result['season'] = f"{year}-{year + 1}"
+            result['tier'] = self.get_tier(result['division'])
+            return result
+        
+        logger.warning(f"Dosya adı parse edilemedi: {filename}")
+        return result
+    
+    def get_tier(self, division: str) -> int:
+        """
+        Lig kodundan tier seviyesini döndürür.
+        
+        Args:
+            division: Lig kodu (E0, T1, D2 vb.)
+            
+        Returns:
+            int: 1 (Tier 1 - Ana Lig) veya 2 (Tier 2 - Alt Lig)
+        """
+        if division in self.TIER_1_LEAGUES:
+            return 1
+        elif division in self.TIER_2_LEAGUES:
+            return 2
+        else:
+            # Bilinmeyen ligler için varsayılan
+            logger.debug(f"Bilinmeyen lig kodu, Tier 1 varsayıldı: {division}")
+            return 1
     
     def load_csv(
         self, 
@@ -364,7 +470,7 @@ class DataLoader:
         # Bahis oranlarını sayıya çevir
         odds_cols = ['home_odds', 'draw_odds', 'away_odds']
         for col in odds_cols:
-            if col in df.columns:
+            if col in df.columns and isinstance(df[col], pd.Series):
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
         # Negatif değerleri temizle
@@ -527,15 +633,22 @@ class DataLoader:
         self,
         file_path: Union[str, Path],
         season: Optional[str] = None,
+        division: Optional[str] = None,
+        tier: Optional[int] = None,
         replace_existing: bool = False
     ) -> int:
         """
         CSV dosyasını okur, temizler ve veritabanına yükler.
         Tek adımda tüm işlemleri yapar.
         
+        Division, tier ve season bilgisi dosya adından otomatik çıkarılır.
+        Manuel değer verilirse o kullanılır.
+        
         Args:
             file_path: CSV dosyası yolu
-            season: Sezon bilgisi (None ise tarihten hesaplanır)
+            season: Sezon bilgisi (None ise dosya adından çıkarılır)
+            division: Lig kodu (None ise dosya adından çıkarılır)
+            tier: Lig seviyesi (None ise division'dan hesaplanır)
             replace_existing: Var olan kayıtları değiştir
             
         Returns:
@@ -543,13 +656,26 @@ class DataLoader:
             
         Example:
             >>> count = loader.process_and_load(
-            ...     "data/raw_csv/E0_2023.csv",
-            ...     season="2023-2024"
-            ... )
+            ...     "data/raw_csv/E0_2023-2024.csv"
+            ... )  # division=E0, tier=1, season=2023-2024 otomatik
         """
+        file_path = Path(file_path)
         logger.info(f"İşlem başlıyor: {file_path}")
         
         try:
+            # Dosya adından metadata çıkar
+            file_info = self.parse_filename(file_path.name)
+            
+            # Manuel değer verilmemişse dosya adından al
+            if division is None:
+                division = file_info.get('division')
+            if tier is None:
+                tier = file_info.get('tier', 1)
+            if season is None:
+                season = file_info.get('season')
+            
+            logger.debug(f"Metadata: division={division}, tier={tier}, season={season}")
+            
             # 1. CSV'yi oku
             df = self.load_csv(file_path)
             
@@ -559,16 +685,26 @@ class DataLoader:
             # 3. Takım isimlerini standardize et
             df = self.standardize_team_names(df)
             
-            # 4. Sezon ekle
+            # 4. Division ve Tier bilgilerini ekle
+            if division:
+                df['division'] = division
+            if tier:
+                df['tier'] = tier
+            
+            # 5. Sezon ekle
             if season:
                 df['season'] = season
             else:
                 df = self.add_season_column(df)
             
-            # 5. Veritabanına yükle
+            # 6. Referee bilgisini işle (CSV'de varsa)
+            if 'referee' not in df.columns:
+                df['referee'] = None
+            
+            # 7. Veritabanına yükle
             count = self.load_to_database(df, replace_existing=replace_existing)
             
-            logger.info(f"İşlem tamamlandı: {count} kayıt yüklendi")
+            logger.info(f"İşlem tamamlandı: {count} kayıt yüklendi ({division}/{tier}/{season})")
             return count
             
         except Exception as e:

@@ -214,15 +214,20 @@ class DixonColesModel:
         Returns:
             Tuple[float, float]: (ev beklenen gol, dep beklenen gol)
         """
+        # Bilinmeyen takımlar için varsayılan parametreler (Ligden yeni çıkan takım profili)
+        # Genelde lig ortalamasından biraz daha zayıftırlar.
+        default_attack = 0.85
+        default_defense = 1.15
+        
         if home_team not in self.params.teams:
-            logger.warning(f"Bilinmeyen takım: {home_team}, ortalama değerler kullanılıyor")
-            home_params = TeamParameters()
+            logger.debug(f"Bilinmeyen takım (Ev): {home_team}, yeni takım profili kullanılıyor")
+            home_params = TeamParameters(attack=default_attack, defense=default_defense)
         else:
             home_params = self.params.teams[home_team]
         
         if away_team not in self.params.teams:
-            logger.warning(f"Bilinmeyen takım: {away_team}, ortalama değerler kullanılıyor")
-            away_params = TeamParameters()
+            logger.debug(f"Bilinmeyen takım (Dep): {away_team}, yeni takım profili kullanılıyor")
+            away_params = TeamParameters(attack=default_attack, defense=default_defense)
         else:
             away_params = self.params.teams[away_team]
         

@@ -50,10 +50,13 @@ class MatchHistory:
     date: str = ""
     home_team: str = ""
     away_team: str = ""
+    division: Optional[str] = None  # Lig kodu (E0, T1, D1 vb.)
+    tier: int = 1  # Lig seviyesi (1 = Ana Lig, 2 = Alt Lig)
+    referee: Optional[str] = None  # Hakem adı
     fthg: int = 0  # Full Time Home Goals
     ftag: int = 0  # Full Time Away Goals
     result: str = ""  # H (Home), D (Draw), A (Away)
-    stats: Optional[str] = None  # JSON formatında istatistikler
+    stats: Optional[str] = None  # JSON formatında istatistikler (40 parametre)
     home_odds: Optional[float] = None
     draw_odds: Optional[float] = None
     away_odds: Optional[float] = None
@@ -111,6 +114,9 @@ CREATE TABLE IF NOT EXISTS matches_history (
     date TEXT NOT NULL,
     home_team TEXT NOT NULL,
     away_team TEXT NOT NULL,
+    division TEXT,
+    tier INTEGER DEFAULT 1,
+    referee TEXT,
     fthg INTEGER NOT NULL,
     ftag INTEGER NOT NULL,
     result TEXT NOT NULL CHECK(result IN ('H', 'D', 'A')),
@@ -120,7 +126,7 @@ CREATE TABLE IF NOT EXISTS matches_history (
     away_odds REAL,
     season TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(date, home_team, away_team)
+    UNIQUE(date, home_team, away_team, division)
 );
 """
 
@@ -176,6 +182,9 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_matches_home_team ON matches_history(home_team);",
     "CREATE INDEX IF NOT EXISTS idx_matches_away_team ON matches_history(away_team);",
     "CREATE INDEX IF NOT EXISTS idx_matches_season ON matches_history(season);",
+    "CREATE INDEX IF NOT EXISTS idx_matches_division ON matches_history(division);",
+    "CREATE INDEX IF NOT EXISTS idx_matches_tier ON matches_history(tier);",
+    "CREATE INDEX IF NOT EXISTS idx_matches_referee ON matches_history(referee);",
     "CREATE INDEX IF NOT EXISTS idx_fixtures_date ON fixtures(date);",
     "CREATE INDEX IF NOT EXISTS idx_fixtures_status ON fixtures(status);",
     "CREATE INDEX IF NOT EXISTS idx_predictions_match_id ON predictions(match_id);",
@@ -418,6 +427,7 @@ class DatabaseManager:
         Args:
             df: Maç verilerini içeren DataFrame
                 Gerekli sütunlar: date, home_team, away_team, fthg, ftag, result
+                Opsiyonel sütunlar: division, tier, referee, stats, oranlar
             replace_existing: Var olan kayıtları güncelle (True) veya atla (False)
             
         Returns:
@@ -447,46 +457,124 @@ class DatabaseManager:
             logger.warning("Eklenecek veri bulunamadı (DataFrame boş)")
             return 0
         
-        # INSERT sorgusu
+        # INSERT sorgusu - yeni sütunlar eklendi
         if replace_existing:
             insert_sql = """
                 INSERT OR REPLACE INTO matches_history 
-                (date, home_team, away_team, fthg, ftag, result, stats, 
-                 home_odds, draw_odds, away_odds, season)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (date, home_team, away_team, division, tier, referee, 
+                 fthg, ftag, result, stats, home_odds, draw_odds, away_odds, season)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         else:
             insert_sql = """
                 INSERT OR IGNORE INTO matches_history 
-                (date, home_team, away_team, fthg, ftag, result, stats, 
-                 home_odds, draw_odds, away_odds, season)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (date, home_team, away_team, division, tier, referee,
+                 fthg, ftag, result, stats, home_odds, draw_odds, away_odds, season)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         
         # Veriyi tuple listesine dönüştür
         records = []
         for _, row in df.iterrows():
-            # Stats JSON'u oluştur
+            # Stats JSON'u oluştur (40 parametre desteği)
             stats_dict = {}
+            
+            # Temel istatistikler
             stat_columns = ['hs', 'as', 'hst', 'ast', 'hc', 'ac', 'hf', 'af', 'hy', 'ay', 'hr', 'ar']
             for col in stat_columns:
                 if col in df.columns and pd.notna(row.get(col)):
-                    stats_dict[col.upper()] = int(row[col])
+                    try:
+                        stats_dict[col.upper()] = int(row[col])
+                    except (ValueError, TypeError):
+                        pass
+            
+            # İlk yarı skorları
+            for col in ['hthg', 'htag', 'htr']:
+                if col in df.columns and pd.notna(row.get(col)):
+                    if col == 'htr':
+                        stats_dict[col.upper()] = str(row[col])
+                    else:
+                        try:
+                            stats_dict[col.upper()] = int(row[col])
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Genişletilmiş oran verileri
+            odds_cols = [
+                'b365h', 'b365d', 'b365a',  # Bet365
+                'avgh', 'avgd', 'avga',      # Average
+                'maxh', 'maxd', 'maxa',      # Max
+                'b365ch', 'b365cd', 'b365ca',  # Closing
+                'b365>2.5', 'b365<2.5',      # Over/Under
+                'ahh', 'b365ahh', 'b365aha'  # Asian Handicap
+            ]
+            for col in odds_cols:
+                if col in df.columns and pd.notna(row.get(col)):
+                    try:
+                        stats_dict[col.upper().replace('.', '_').replace('<', 'U').replace('>', 'O')] = float(row[col])
+                    except (ValueError, TypeError):
+                        pass
             
             stats_json = json.dumps(stats_dict) if stats_dict else None
+            
+            # Güvenli değer alma fonksiyonları
+            def safe_get_float(col_name):
+                if col_name not in df.columns:
+                    return None
+                try:
+                    val = row[col_name]
+                    if val is None:
+                        return None
+                    import math
+                    if isinstance(val, float) and math.isnan(val):
+                        return None
+                    return float(val)
+                except (ValueError, TypeError, KeyError):
+                    return None
+            
+            def safe_get_str(col_name):
+                if col_name not in df.columns:
+                    return None
+                try:
+                    val = row[col_name]
+                    if val is None:
+                        return None
+                    import math
+                    if isinstance(val, float) and math.isnan(val):
+                        return None
+                    return str(val).strip() if val else None
+                except (ValueError, TypeError, KeyError):
+                    return None
+            
+            def safe_get_int(col_name, default=None):
+                if col_name not in df.columns:
+                    return default
+                try:
+                    val = row[col_name]
+                    if val is None:
+                        return default
+                    import math
+                    if isinstance(val, float) and math.isnan(val):
+                        return default
+                    return int(val)
+                except (ValueError, TypeError, KeyError):
+                    return default
             
             record = (
                 str(row['date']),
                 str(row['home_team']),
                 str(row['away_team']),
+                safe_get_str('division'),
+                safe_get_int('tier', 1),
+                safe_get_str('referee'),
                 int(row['fthg']),
                 int(row['ftag']),
                 str(row['result']),
                 stats_json,
-                float(row['home_odds']) if 'home_odds' in df.columns and pd.notna(row.get('home_odds')) else None,
-                float(row['draw_odds']) if 'draw_odds' in df.columns and pd.notna(row.get('draw_odds')) else None,
-                float(row['away_odds']) if 'away_odds' in df.columns and pd.notna(row.get('away_odds')) else None,
-                str(row['season']) if 'season' in df.columns and pd.notna(row.get('season')) else None,
+                safe_get_float('home_odds'),
+                safe_get_float('draw_odds'),
+                safe_get_float('away_odds'),
+                safe_get_str('season'),
             )
             records.append(record)
         

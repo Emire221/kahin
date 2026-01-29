@@ -1,0 +1,33 @@
+# The Oracle - SP1 (İspanya La Liga) CLI Komutları
+cd c:\Users\ahmet\Desktop\Oracle
+
+python -c "from backend.database.db_manager import get_database; db = get_database(); db.execute_query('DELETE FROM matches_history'); db.execute_query('DELETE FROM predictions'); db.execute_query('DELETE FROM wallet_simulation'); print('Temizlendi')"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2015-2016.csv'); print(f'{count} mac yuklendi')"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2016-2017.csv'); print(f'{count} mac yuklendi')"
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='SP1'); e.print_report(r)"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2017-2018.csv'); print(f'{count} mac yuklendi')"
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='SP1'); e.print_report(r)"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2018-2019.csv'); print(f'{count} mac yuklendi')"
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='SP1'); e.print_report(r)"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2019-2020.csv'); print(f'{count} mac yuklendi')"
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='SP1'); e.print_report(r)"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2020-2021.csv'); print(f'{count} mac yuklendi')"
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='SP1'); e.print_report(r)"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2021-2022.csv'); print(f'{count} mac yuklendi')"
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='SP1'); e.print_report(r)"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2022-2023.csv'); print(f'{count} mac yuklendi')"
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='SP1'); e.print_report(r)"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2023-2024.csv'); print(f'{count} mac yuklendi')"
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='SP1'); e.print_report(r)"
+
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/SP1_2024-2025.csv'); print(f'{count} mac yuklendi')"
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='SP1'); e.print_report(r); e.export_report()"

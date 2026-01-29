@@ -283,6 +283,167 @@ class ModelTrainer:
         
         return self._training_report
     
+    def train_by_league(
+        self,
+        divisions: Optional[List[str]] = None,
+        tier1_only: bool = True,
+        save: bool = True
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Lig bazlı model eğitimi yapar.
+        
+        Her lig için ayrı XGBoost modeli eğitir ve kaydeder.
+        Tier 2 verileri, Tier 1 liglerdeki takımların geçmişi olarak kullanılır.
+        
+        Args:
+            divisions: Eğitilecek lig kodları listesi (None ise tüm Tier 1 ligler)
+            tier1_only: Sadece Tier 1 ligleri eğit
+            save: Modelleri kaydet
+            
+        Returns:
+            Dict: Lig bazlı eğitim raporları
+            
+        Example:
+            >>> trainer.train_by_league(divisions=['E0', 'T1'])
+            >>> # veya
+            >>> trainer.train_by_league()  # Tüm Tier 1 ligler
+        """
+        logger.info("=" * 50)
+        logger.info("LİG BAZLI EĞİTİM BAŞLIYOR")
+        logger.info("=" * 50)
+        
+        # Tier sabitleri
+        TIER_1_LEAGUES = {'E0', 'D1', 'I1', 'SP1', 'F1', 'T1', 'N1', 'B1', 'P1'}
+        TIER_2_LEAGUES = {'E1', 'D2', 'I2', 'SP2', 'F2'}
+        
+        # Veritabanından tüm veriyi çek
+        db = self._get_db()
+        full_df = db.get_matches_dataframe()
+        
+        if full_df.empty:
+            raise ValueError("Veritabanında eğitim verisi bulunamadı!")
+        
+        # Division kontrolü
+        if 'division' not in full_df.columns:
+            logger.warning("Division sütunu bulunamadı, standart eğitim yapılacak")
+            return {'default': self.train_all(save=save)}
+        
+        # Mevcut ligleri bul
+        available_divisions = set(full_df['division'].dropna().unique())
+        logger.info(f"Mevcut ligler: {available_divisions}")
+        
+        # Eğitilecek ligleri belirle
+        if divisions:
+            target_leagues = set(divisions) & available_divisions
+        elif tier1_only:
+            target_leagues = TIER_1_LEAGUES & available_divisions
+        else:
+            target_leagues = available_divisions
+        
+        if not target_leagues:
+            raise ValueError("Eğitilecek lig bulunamadı!")
+        
+        logger.info(f"Eğitilecek ligler ({len(target_leagues)}): {sorted(target_leagues)}")
+        
+        # Tier 2 verisini hazırla (her Tier 1 eğitiminde context olarak kullanılacak)
+        tier2_df = full_df[full_df['division'].isin(TIER_2_LEAGUES)]
+        logger.info(f"Tier 2 verisi: {len(tier2_df)} maç")
+        
+        league_reports = {}
+        
+        for division in sorted(target_leagues):
+            logger.info(f"\n--- {division} Ligi Eğitimi ---")
+            
+            # Bu lig verisini çek
+            league_df = full_df[full_df['division'] == division]
+            
+            if league_df.empty or len(league_df) < 100:
+                logger.warning(f"{division} ligi için yeterli veri yok ({len(league_df)} maç), atlanıyor")
+                continue
+            
+            # Tier 2 verisi ile birleştir (aynı ülke/federasyon)
+            # Örn: E0 için E1 verisini de ekle
+            related_tier2 = f"{division[0]}2" if len(division) == 2 and division[1] == '0' else None
+            
+            if related_tier2 and related_tier2 in TIER_2_LEAGUES:
+                related_df = tier2_df[tier2_df['division'] == related_tier2]
+                combined_df = pd.concat([related_df, league_df], ignore_index=True)
+                logger.info(f"{division} + {related_tier2} birleştirildi: {len(combined_df)} maç")
+            else:
+                combined_df = league_df
+            
+            # Tarihe göre sırala
+            combined_df = combined_df.sort_values('date')
+            
+            # XGBoost modeli eğit
+            try:
+                xgb_model = XGBoostPredictor(
+                    n_estimators=200,
+                    max_depth=6,
+                    learning_rate=0.05,
+                    use_calibration=True
+                )
+                
+                start_time = datetime.now()
+                xgb_model.fit(combined_df)
+                training_time = (datetime.now() - start_time).total_seconds()
+                
+                # Kaydet
+                if save:
+                    model_filename = f"xgboost_{division}.pkl"
+                    model_path = self.models_dir / model_filename
+                    xgb_model.save(model_path)
+                    logger.info(f"Model kaydedildi: {model_path}")
+                
+                # Rapor
+                league_reports[division] = {
+                    'training_date': datetime.now().isoformat(),
+                    'training_time_seconds': round(training_time, 2),
+                    'num_matches': len(combined_df),
+                    'num_teams': len(xgb_model._team_stats),
+                    'feature_count': len(xgb_model.feature_names),
+                    'tier2_matches': len(combined_df) - len(league_df),
+                }
+                
+                logger.info(f"{division} eğitimi tamamlandı ({training_time:.1f}s)")
+                
+            except Exception as e:
+                logger.error(f"{division} eğitimi başarısız: {e}")
+                league_reports[division] = {'error': str(e)}
+        
+        # Genel raporu kaydet
+        if save:
+            report_path = self.models_dir / "multi_league_report.json"
+            with open(report_path, 'w', encoding='utf-8') as f:
+                json.dump(league_reports, f, indent=2, ensure_ascii=False)
+            logger.info(f"Çoklu lig raporu kaydedildi: {report_path}")
+        
+        logger.info("=" * 50)
+        logger.info(f"LİG BAZLI EĞİTİM TAMAMLANDI ({len(league_reports)} lig)")
+        logger.info("=" * 50)
+        
+        return league_reports
+    
+    def load_league_model(self, division: str) -> Optional[XGBoostPredictor]:
+        """
+        Belirli bir lig için eğitilmiş modeli yükler.
+        
+        Args:
+            division: Lig kodu (E0, T1, vb.)
+            
+        Returns:
+            XGBoostPredictor veya None
+        """
+        model_path = self.models_dir / f"xgboost_{division}.pkl"
+        
+        if model_path.exists():
+            model = XGBoostPredictor.load(model_path)
+            logger.info(f"{division} modeli yüklendi")
+            return model
+        else:
+            logger.warning(f"{division} modeli bulunamadı: {model_path}")
+            return None
+    
     def load_models(self) -> None:
         """Kaydedilmiş modelleri yükler."""
         

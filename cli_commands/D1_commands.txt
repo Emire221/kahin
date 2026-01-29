@@ -1,0 +1,65 @@
+# The Oracle - D1 (Almanya Bundesliga) CLI Komutları
+# Her komutu sırasıyla terminalde çalıştırın
+
+# ADIM 0: Proje dizinine git
+cd c:\Users\ahmet\Desktop\Oracle
+
+# ADIM 1: Veritabanını temizle
+python -c "from backend.database.db_manager import get_database; db = get_database(); db.execute_query('DELETE FROM matches_history'); db.execute_query('DELETE FROM predictions'); db.execute_query('DELETE FROM wallet_simulation'); print('Temizlendi')"
+
+# ADIM 2: D1 2015-2016 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2015-2016.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 3: D1 2016-2017 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2016-2017.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 4: Backtest
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='D1'); e.print_report(r)"
+
+# ADIM 5: D1 2017-2018 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2017-2018.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 6: Backtest
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='D1'); e.print_report(r)"
+
+# ADIM 7: D1 2018-2019 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2018-2019.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 8: Backtest
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='D1'); e.print_report(r)"
+
+# ADIM 9: D1 2019-2020 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2019-2020.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 10: Backtest
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='D1'); e.print_report(r)"
+
+# ADIM 11: D1 2020-2021 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2020-2021.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 12: Backtest
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='D1'); e.print_report(r)"
+
+# ADIM 13: D1 2021-2022 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2021-2022.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 14: Backtest
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='D1'); e.print_report(r)"
+
+# ADIM 15: D1 2022-2023 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2022-2023.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 16: Backtest
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='D1'); e.print_report(r)"
+
+# ADIM 17: D1 2023-2024 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2023-2024.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 18: Backtest
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='D1'); e.print_report(r)"
+
+# ADIM 19: D1 2024-2025 yükle
+python -c "from backend.data.data_loader import DataLoader; loader = DataLoader(); count = loader.process_and_load('data/raw_csv/D1_2024-2025.csv'); print(f'{count} mac yuklendi')"
+
+# ADIM 20: Final Backtest
+python -c "from backend.simulation.backtest_engine import BacktestEngine; e = BacktestEngine(); r = e.run_backtest(min_train_seasons=1, division='D1'); e.print_report(r); e.export_report()"

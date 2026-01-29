@@ -189,27 +189,49 @@ class XGBoostPredictor:
         >>> probs = model.predict_proba("Arsenal", "Chelsea")
     """
     
-    # Öznitelik listesi
+    # Öznitelik listesi (Genişletilmiş - Rolling Averages dahil)
     FEATURE_NAMES = [
+        # Elo ve Form
         'home_elo',
         'away_elo',
         'elo_diff',
         'home_form',
         'away_form',
         'form_diff',
+        
+        # Temel Gol İstatistikleri
         'home_goals_scored_avg',
         'away_goals_scored_avg',
         'home_goals_conceded_avg',
         'away_goals_conceded_avg',
         'home_win_rate',
         'away_win_rate',
+        
+        # Head-to-Head
         'h2h_home_wins',
         'h2h_away_wins',
         'h2h_draws',
-        'home_home_form',  # Ev sahibinin evdeki performansı
-        'away_away_form',  # Deplasmanın dışarıdaki performansı
+        
+        # Ev/Deplasman Performansı
+        'home_home_form',
+        'away_away_form',
         'home_days_rest',
         'away_days_rest',
+        
+        # Rolling Averages (Son 5 Maç) - YENİ
+        'home_avg_shots_on_target_5',   # İsabetli şut ortalaması
+        'away_avg_shots_on_target_5',
+        'home_avg_corners_5',           # Korner ortalaması
+        'away_avg_corners_5',
+        'home_aggression_index',        # Agresiflik: (Sarı + 2*Kırmızı) ort.
+        'away_aggression_index',
+        
+        # Hakem Etkisi - YENİ
+        'referee_home_win_rate',        # Bu hakemin yönettiği maçlarda ev sahibi kazanma oranı
+        
+        # Tier Bilgisi - YENİ
+        'home_tier',                    # Takımın liginin seviyesi
+        'away_tier',
     ]
     
     def __init__(
@@ -265,10 +287,15 @@ class XGBoostPredictor:
         self._last_match_dates: Dict[str, datetime] = {}
         self._label_encoder = LabelEncoder()
         
+        # Rolling Averages için geçmiş istatistikler (YENİ)
+        self._team_match_history: Dict[str, List[Dict]] = defaultdict(list)  # Takım bazlı maç geçmişi
+        self._referee_stats: Dict[str, Dict] = defaultdict(lambda: {'matches': 0, 'home_wins': 0})  # Hakem istatistikleri
+        self._team_tiers: Dict[str, int] = {}  # Takımın hangi tier'da olduğu
+        
         # Eğitim verisi (tahminde kullanmak için)
         self._training_df: Optional[pd.DataFrame] = None
         
-        logger.info("XGBoost modeli başlatıldı")
+        logger.info("XGBoost modeli başlatıldı (Genişletilmiş feature seti)")
     
     def _update_team_stats(
         self,
@@ -355,7 +382,8 @@ class XGBoostPredictor:
         self,
         home_team: str,
         away_team: str,
-        match_date: Optional[datetime] = None
+        match_date: Optional[datetime] = None,
+        referee: Optional[str] = None
     ) -> np.ndarray:
         """
         Maç için öznitelikleri çıkarır.
@@ -364,6 +392,7 @@ class XGBoostPredictor:
             home_team: Ev sahibi takım
             away_team: Deplasman takım
             match_date: Maç tarihi (dinlenme günü hesabı için)
+            referee: Hakem adı (hakem etkisi için)
             
         Returns:
             np.ndarray: Öznitelik vektörü
@@ -392,29 +421,97 @@ class XGBoostPredictor:
             home_rest = 7
             away_rest = 7
         
+        # Rolling Averages hesapla (son 5 maç)
+        home_rolling = self._calculate_rolling_stats(home_team, 5)
+        away_rolling = self._calculate_rolling_stats(away_team, 5)
+        
+        # Hakem etkisi
+        referee_home_win_rate = 0.45  # Varsayılan
+        if referee and referee in self._referee_stats:
+            ref_stats = self._referee_stats[referee]
+            if ref_stats['matches'] >= 3:  # En az 3 maç yönetmiş olmalı
+                referee_home_win_rate = ref_stats['home_wins'] / ref_stats['matches']
+        
+        # Tier bilgisi
+        home_tier = self._team_tiers.get(home_team, 1)
+        away_tier = self._team_tiers.get(away_team, 1)
+        
         features = [
+            # Elo ve Form
             home_elo,
             away_elo,
             home_elo - away_elo,
             home_stats.form_points,
             away_stats.form_points,
             home_stats.form_points - away_stats.form_points,
+            
+            # Temel Gol İstatistikleri
             home_stats.goals_per_game,
             away_stats.goals_per_game,
             home_stats.goals_against_per_game,
             away_stats.goals_against_per_game,
             home_stats.win_rate,
             away_stats.win_rate,
+            
+            # Head-to-Head
             h2h['home_wins'],
             h2h['away_wins'],
             h2h['draws'],
+            
+            # Ev/Deplasman Performansı
             home_home.win_rate if home_home.matches_played > 0 else 0.5,
             away_away.win_rate if away_away.matches_played > 0 else 0.3,
-            min(home_rest, 14),  # Cap at 14 days
+            min(home_rest, 14),
             min(away_rest, 14),
+            
+            # Rolling Averages (YENİ)
+            home_rolling['avg_shots_on_target'],
+            away_rolling['avg_shots_on_target'],
+            home_rolling['avg_corners'],
+            away_rolling['avg_corners'],
+            home_rolling['aggression_index'],
+            away_rolling['aggression_index'],
+            
+            # Hakem Etkisi (YENİ)
+            referee_home_win_rate,
+            
+            # Tier Bilgisi (YENİ)
+            home_tier,
+            away_tier,
         ]
         
         return np.array(features)
+    
+    def _calculate_rolling_stats(self, team: str, n_matches: int = 5) -> Dict[str, float]:
+        """
+        Takımın son N maçının rolling istatistiklerini hesaplar.
+        
+        Args:
+            team: Takım adı
+            n_matches: Kaç maç geriye bakılacak
+            
+        Returns:
+            Dict: Rolling ortalamalar
+        """
+        history = self._team_match_history.get(team, [])
+        recent = history[-n_matches:] if len(history) >= n_matches else history
+        
+        if not recent:
+            return {
+                'avg_shots_on_target': 4.0,  # Varsayılan değerler
+                'avg_corners': 5.0,
+                'aggression_index': 2.0,
+            }
+        
+        shots_on_target = [m.get('shots_on_target', 4) for m in recent]
+        corners = [m.get('corners', 5) for m in recent]
+        aggression = [m.get('aggression', 2) for m in recent]
+        
+        return {
+            'avg_shots_on_target': sum(shots_on_target) / len(shots_on_target),
+            'avg_corners': sum(corners) / len(corners),
+            'aggression_index': sum(aggression) / len(aggression),
+        }
     
     def _prepare_training_data(
         self,
@@ -451,12 +548,21 @@ class XGBoostPredictor:
             result = row[result_col]
             match_date = row['_date']
             
+            # Opsiyonel alanlar
+            referee = row.get('referee', None) if 'referee' in df.columns else None
+            tier = row.get('tier', 1) if 'tier' in df.columns else 1
+            
+            # Takım tier bilgisini güncelle
+            if tier:
+                self._team_tiers[home_team] = tier
+                self._team_tiers[away_team] = tier
+            
             # Öznitelikleri çıkar (mevcut istatistiklerle)
-            # Minimum 5 maç oynamamış takımlar için atla
+            # Minimum 3 maç oynamamış takımlar için atla
             if (self._team_stats[home_team].matches_played >= 3 and 
                 self._team_stats[away_team].matches_played >= 3):
                 
-                features = self._extract_features(home_team, away_team, match_date)
+                features = self._extract_features(home_team, away_team, match_date, referee)
                 X_list.append(features)
                 y_list.append(result)
             
@@ -465,6 +571,14 @@ class XGBoostPredictor:
             self._update_team_stats(away_team, away_goals, home_goals, False, match_date)
             self._update_h2h(home_team, away_team, home_goals, away_goals)
             self._elo.update(home_team, away_team, home_goals, away_goals)
+            
+            # Rolling stats için maç geçmişini kaydet (YENİ)
+            self._update_match_history(home_team, row, is_home=True)
+            self._update_match_history(away_team, row, is_home=False)
+            
+            # Hakem istatistiklerini güncelle (YENİ)
+            if referee:
+                self._update_referee_stats(referee, home_goals, away_goals)
         
         X = np.array(X_list)
         y = np.array(y_list)
@@ -472,6 +586,39 @@ class XGBoostPredictor:
         logger.info(f"Eğitim verisi hazır: {len(X)} örnek, {X.shape[1]} öznitelik")
         
         return X, y
+    
+    def _update_match_history(self, team: str, row: pd.Series, is_home: bool) -> None:
+        """
+        Takımın maç geçmişine yeni maç ekler (rolling stats için).
+        """
+        # İstatistik sütunlarını kontrol et
+        if is_home:
+            shots_on_target = row.get('hst', 4) if 'hst' in row.index and pd.notna(row.get('hst')) else 4
+            corners = row.get('hc', 5) if 'hc' in row.index and pd.notna(row.get('hc')) else 5
+            yellow = row.get('hy', 1) if 'hy' in row.index and pd.notna(row.get('hy')) else 1
+            red = row.get('hr', 0) if 'hr' in row.index and pd.notna(row.get('hr')) else 0
+        else:
+            shots_on_target = row.get('ast', 4) if 'ast' in row.index and pd.notna(row.get('ast')) else 4
+            corners = row.get('ac', 5) if 'ac' in row.index and pd.notna(row.get('ac')) else 5
+            yellow = row.get('ay', 1) if 'ay' in row.index and pd.notna(row.get('ay')) else 1
+            red = row.get('ar', 0) if 'ar' in row.index and pd.notna(row.get('ar')) else 0
+        
+        # Agresiflik indeksi: Sarı + 2*Kırmızı
+        aggression = int(yellow) + 2 * int(red)
+        
+        self._team_match_history[team].append({
+            'shots_on_target': int(shots_on_target),
+            'corners': int(corners),
+            'aggression': aggression,
+        })
+    
+    def _update_referee_stats(self, referee: str, home_goals: int, away_goals: int) -> None:
+        """
+        Hakem istatistiklerini günceller.
+        """
+        self._referee_stats[referee]['matches'] += 1
+        if home_goals > away_goals:
+            self._referee_stats[referee]['home_wins'] += 1
     
     def fit(
         self,
@@ -501,6 +648,11 @@ class XGBoostPredictor:
         self._h2h_stats.clear()
         self._elo = EloCalculator()
         self._last_match_dates.clear()
+        
+        # Yeni veri yapılarını sıfırla (Rolling stats için)
+        self._team_match_history.clear()
+        self._referee_stats.clear()
+        self._team_tiers.clear()
         
         # Eğitim verisi sakla
         self._training_df = df.copy()

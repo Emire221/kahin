@@ -141,6 +141,12 @@ class BacktestEngine:
         self._dixon_coles: Optional[DixonColesModel] = None
         self._xgboost: Optional[XGBoostPredictor] = None
         self._season_results: List[SeasonResult] = []
+        self._log_file: Optional[Path] = None
+        self._log_id: Optional[int] = None
+        
+        # Log dizini oluştur
+        self._logs_dir = Path("data/logs")
+        self._logs_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info("BacktestEngine başlatıldı")
     
@@ -150,32 +156,51 @@ class BacktestEngine:
             self._db = get_database()
         return self._db
     
-    def _get_seasons(self) -> List[str]:
+    def _get_seasons(self, division: Optional[str] = None) -> List[str]:
         """Veritabanındaki sezonları döndürür"""
         db = self._get_db()
-        result = db.execute_query("""
-            SELECT DISTINCT season FROM matches_history
-            WHERE season IS NOT NULL
-            ORDER BY season
-        """)
+        if division:
+            result = db.execute_query("""
+                SELECT DISTINCT season FROM matches_history
+                WHERE season IS NOT NULL AND division = ?
+                ORDER BY season
+            """, (division,))
+        else:
+            result = db.execute_query("""
+                SELECT DISTINCT season FROM matches_history
+                WHERE season IS NOT NULL
+                ORDER BY season
+            """)
         return [r['season'] for r in result]
     
-    def _get_season_data(self, season: str) -> pd.DataFrame:
+    def _get_season_data(self, season: str, division: Optional[str] = None) -> pd.DataFrame:
         """Belirli bir sezonun verilerini döndürür"""
         db = self._get_db()
-        result = db.execute_query(
-            "SELECT * FROM matches_history WHERE season = ? ORDER BY date",
-            (season,)
-        )
+        if division:
+            result = db.execute_query(
+                "SELECT * FROM matches_history WHERE season = ? AND division = ? ORDER BY date",
+                (season, division)
+            )
+        else:
+            result = db.execute_query(
+                "SELECT * FROM matches_history WHERE season = ? ORDER BY date",
+                (season,)
+            )
         return pd.DataFrame(result)
     
-    def _get_training_data(self, end_season: str) -> pd.DataFrame:
+    def _get_training_data(self, end_season: str, division: Optional[str] = None) -> pd.DataFrame:
         """Belirli sezonu DAHIL etmeden önceki tüm verileri döndürür"""
         db = self._get_db()
-        result = db.execute_query(
-            "SELECT * FROM matches_history WHERE season < ? ORDER BY date",
-            (end_season,)
-        )
+        if division:
+            result = db.execute_query(
+                "SELECT * FROM matches_history WHERE season < ? AND division = ? ORDER BY date",
+                (end_season, division)
+            )
+        else:
+            result = db.execute_query(
+                "SELECT * FROM matches_history WHERE season < ? ORDER BY date",
+                (end_season,)
+            )
         return pd.DataFrame(result)
     
     def _train_models(self, train_df: pd.DataFrame) -> bool:
@@ -202,6 +227,111 @@ class BacktestEngine:
         except Exception as e:
             logger.error(f"Model eğitim hatası: {e}")
             return False
+    
+    def _save_prediction(
+        self,
+        match_date: str,
+        home_team: str,
+        away_team: str,
+        predictions: Dict[str, float],
+        actual_result: str,
+        season: str,
+        division: Optional[str] = None
+    ) -> None:
+        """
+        Tahminleri predictions tablosuna kümülatif olarak kaydeder.
+        
+        Args:
+            match_date: Maç tarihi
+            home_team: Ev sahibi takım
+            away_team: Deplasman takım
+            predictions: Model tahminleri {'home_win', 'draw', 'away_win'}
+            actual_result: Gerçek sonuç (H, D, A)
+            season: Sezon
+            division: Lig kodu
+        """
+        db = self._get_db()
+        
+        # En yüksek olasılıklı tahmin
+        pred_result = max(predictions, key=lambda k: predictions[k])
+        pred_map = {'home_win': 'H', 'draw': 'D', 'away_win': 'A'}
+        predicted = pred_map.get(pred_result, 'H')
+        
+        # Tahmin doğru mu?
+        is_correct = 1 if predicted == actual_result else 0
+        
+        try:
+            db.execute_query("""
+                INSERT OR REPLACE INTO predictions 
+                (date, home_team, away_team, predicted_result, actual_result,
+                 home_prob, draw_prob, away_prob, is_correct, season, division)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                match_date,
+                home_team,
+                away_team,
+                predicted,
+                actual_result,
+                round(predictions.get('home_win', 0), 4),
+                round(predictions.get('draw', 0), 4),
+                round(predictions.get('away_win', 0), 4),
+                is_correct,
+                season,
+                division
+            ))
+        except Exception as e:
+            logger.debug(f"Tahmin kaydetme hatası: {e}")
+    
+    def _save_wallet_transaction(
+        self,
+        match_date: str,
+        home_team: str,
+        away_team: str,
+        bet_type: str,
+        stake: float,
+        odds: float,
+        result: str,
+        pnl: float,
+        balance_after: float,
+        season: str
+    ) -> None:
+        """
+        Bahis işlemlerini wallet_simulation tablosuna kümülatif olarak kaydeder.
+        
+        Args:
+            match_date: Maç tarihi
+            home_team: Ev sahibi
+            away_team: Deplasman
+            bet_type: Bahis tipi (H, D, A)
+            stake: Bahis miktarı
+            odds: Bahis oranı
+            result: W (won) veya L (lost)
+            pnl: Kar/Zarar
+            balance_after: İşlem sonrası bakiye
+            season: Sezon
+        """
+        db = self._get_db()
+        
+        try:
+            db.execute_query("""
+                INSERT INTO wallet_simulation 
+                (date, home_team, away_team, bet_type, stake, odds, 
+                 result, pnl, balance_after, season)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                match_date,
+                home_team,
+                away_team,
+                bet_type,
+                stake,
+                odds,
+                result,
+                pnl,
+                balance_after,
+                season
+            ))
+        except Exception as e:
+            logger.debug(f"Cüzdan işlemi kaydetme hatası: {e}")
     
     def _predict_match(
         self, 
@@ -342,24 +472,165 @@ class BacktestEngine:
         
         return None
     
+    def run_season(self, test_season: str, division: Optional[str] = None) -> Optional[SeasonResult]:
+        """
+        Tek bir sezon için backtest çalıştırır.
+        
+        Args:
+            test_season: Test edilecek sezon
+            division: Lig kodu (None ise tüm ligler)
+            
+        Returns:
+            SeasonResult: Sezon sonuçları veya None (hata/veri yoksa)
+        """
+        div_info = f" [{division}]" if division else ""
+        logger.info(f"\n--- Test Sezonu: {test_season}{div_info} ---")
+        
+        # Eğitim verisi (Test sezonundan öncekiler)
+        train_df = self._get_training_data(test_season, division)
+        
+        if train_df.empty:
+            logger.warning(f"Eğitim verisi boş, {test_season} atlanıyor")
+            return None
+        
+        logger.info(f"Eğitim verisi: {len(train_df)} maç")
+        
+        # Modelleri eğit
+        if not self._train_models(train_df):
+            logger.warning(f"Model eğitilemedi, {test_season} atlanıyor")
+            return None
+        
+        # Test verisi
+        test_df = self._get_season_data(test_season, division)
+        
+        if test_df.empty:
+            logger.warning(f"Test verisi boş, {test_season} atlanıyor")
+            return None
+        
+        logger.info(f"Test verisi: {len(test_df)} maç")
+        
+        # Sezon başlangıç bakiyesi
+        season_start_balance = self.wallet.balance
+        season_bets = 0
+        season_wins = 0
+        season_losses = 0
+        
+        # Her maçı test et
+        for _, match in test_df.iterrows():
+            try:
+                home_team = match['home_team']
+                away_team = match['away_team']
+                match_date = str(match.get('date', ''))
+                actual_result = match.get('result', '')
+                division = match.get('division', None)
+                
+                predictions = self._predict_match(home_team, away_team)
+                
+                # Tahmini veritabanına kaydet (KÜMÜLATİF)
+                self._save_prediction(
+                    match_date=match_date,
+                    home_team=home_team,
+                    away_team=away_team,
+                    predictions=predictions,
+                    actual_result=actual_result,
+                    season=test_season,
+                    division=division
+                )
+                
+                result = self._simulate_match(match.to_dict(), predictions)
+                
+                if result:
+                    season_bets += 1
+                    if result['won']:
+                        season_wins += 1
+                    else:
+                        season_losses += 1
+                    
+                    # Cüzdan işlemini kaydet (KÜMÜLATİF)
+                    self._save_wallet_transaction(
+                        match_date=match_date,
+                        home_team=home_team,
+                        away_team=away_team,
+                        bet_type=result.get('bet_on', 'H'),
+                        stake=self.config.stake,
+                        odds=result.get('odds', 1.0),
+                        result='W' if result['won'] else 'L',
+                        pnl=result.get('pnl', 0),
+                        balance_after=self.wallet.balance,
+                        season=test_season
+                    )
+                        
+            except Exception as e:
+                logger.debug(f"Maç hatası: {e}")
+                continue
+        
+        # Sezon özeti
+        season_pnl = self.wallet.balance - season_start_balance
+        season_staked = season_bets * self.config.stake
+        season_roi = (season_pnl / season_staked * 100) if season_staked > 0 else 0
+        season_hit_rate = (season_wins / season_bets * 100) if season_bets > 0 else 0
+        
+        season_result = SeasonResult(
+            season=test_season,
+            matches_tested=len(test_df),
+            bets_placed=season_bets,
+            wins=season_wins,
+            losses=season_losses,
+            total_staked=season_staked,
+            total_pnl=round(season_pnl, 2),
+            roi=round(season_roi, 2),
+            hit_rate=round(season_hit_rate, 2),
+            ending_balance=round(self.wallet.balance, 2)
+        )
+        
+        self._season_results.append(season_result)
+        
+        logger.info(
+            f"Sezon {test_season}: "
+            f"{season_bets} bahis, "
+            f"{season_wins} kazanç, "
+            f"ROI: {season_roi:+.2f}%, "
+            f"Bakiye: {self.wallet.balance:.2f}"
+        )
+        
+        return season_result
+
     def run_backtest(
         self,
-        min_train_seasons: int = 2
+        min_train_seasons: int = 2,
+        division: Optional[str] = None
     ) -> BacktestReport:
         """
-        Walk-Forward Backtest çalıştırır.
+        Walk-Forward Backtest çalıştırır (Tüm sezonlar için).
         
         Args:
             min_train_seasons: Minimum eğitim sezonu sayısı
+            division: Lig kodu (None ise tüm ligler, belirtilirse sadece o lig)
             
         Returns:
             BacktestReport: Backtest sonuçları
         """
+        div_info = f" - Lig: {division}" if division else " - Tüm Ligler"
+        
+        # Log dosyası oluştur
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        div_suffix = f"_{division}" if division else ""
+        self._log_file = self._logs_dir / f"backtest{div_suffix}_{timestamp}.log"
+        
+        # Loguru'yu dosyaya da yönlendir
+        self._log_id = logger.add(
+            self._log_file,
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+            level="DEBUG",
+            rotation="10 MB"
+        )
+        
         logger.info("=" * 50)
-        logger.info("WALK-FORWARD BACKTEST BAŞLIYOR")
+        logger.info(f"WALK-FORWARD BACKTEST BAŞLIYOR{div_info}")
+        logger.info(f"Log dosyası: {self._log_file}")
         logger.info("=" * 50)
         
-        seasons = self._get_seasons()
+        seasons = self._get_seasons(division)
         
         if len(seasons) < min_train_seasons + 1:
             raise ValueError(
@@ -375,88 +646,9 @@ class BacktestEngine:
         for i in range(min_train_seasons, len(seasons)):
             test_season = seasons[i]
             train_seasons = seasons[:i]
+            logger.info(f"Eğitim Sezonları: {train_seasons}")
             
-            logger.info(f"\n--- Test Sezonu: {test_season} ---")
-            logger.info(f"Eğitim: {train_seasons}")
-            
-            # Eğitim verisi
-            train_df = self._get_training_data(test_season)
-            
-            if train_df.empty:
-                logger.warning(f"Eğitim verisi boş, {test_season} atlanıyor")
-                continue
-            
-            logger.info(f"Eğitim verisi: {len(train_df)} maç")
-            
-            # Modelleri eğit
-            if not self._train_models(train_df):
-                logger.warning(f"Model eğitilemedi, {test_season} atlanıyor")
-                continue
-            
-            # Test verisi
-            test_df = self._get_season_data(test_season)
-            
-            if test_df.empty:
-                logger.warning(f"Test verisi boş, {test_season} atlanıyor")
-                continue
-            
-            logger.info(f"Test verisi: {len(test_df)} maç")
-            
-            # Sezon başlangıç bakiyesi
-            season_start_balance = self.wallet.balance
-            season_bets = 0
-            season_wins = 0
-            season_losses = 0
-            
-            # Her maçı test et
-            for _, match in test_df.iterrows():
-                try:
-                    predictions = self._predict_match(
-                        match['home_team'],
-                        match['away_team']
-                    )
-                    
-                    result = self._simulate_match(match.to_dict(), predictions)
-                    
-                    if result:
-                        season_bets += 1
-                        if result['won']:
-                            season_wins += 1
-                        else:
-                            season_losses += 1
-                            
-                except Exception as e:
-                    logger.debug(f"Maç hatası: {e}")
-                    continue
-            
-            # Sezon özeti
-            season_pnl = self.wallet.balance - season_start_balance
-            season_staked = season_bets * self.config.stake
-            season_roi = (season_pnl / season_staked * 100) if season_staked > 0 else 0
-            season_hit_rate = (season_wins / season_bets * 100) if season_bets > 0 else 0
-            
-            season_result = SeasonResult(
-                season=test_season,
-                matches_tested=len(test_df),
-                bets_placed=season_bets,
-                wins=season_wins,
-                losses=season_losses,
-                total_staked=season_staked,
-                total_pnl=round(season_pnl, 2),
-                roi=round(season_roi, 2),
-                hit_rate=round(season_hit_rate, 2),
-                ending_balance=round(self.wallet.balance, 2)
-            )
-            
-            self._season_results.append(season_result)
-            
-            logger.info(
-                f"Sezon {test_season}: "
-                f"{season_bets} bahis, "
-                f"{season_wins} kazanç, "
-                f"ROI: {season_roi:+.2f}%, "
-                f"Bakiye: {self.wallet.balance:.2f}"
-            )
+            self.run_season(test_season, division)
         
         # Toplam rapor
         stats = self.wallet.get_summary()
@@ -480,7 +672,13 @@ class BacktestEngine:
         
         logger.info("\n" + "=" * 50)
         logger.info("BACKTEST TAMAMLANDI")
+        logger.info(f"Log dosyası kaydedildi: {self._log_file}")
         logger.info("=" * 50)
+        
+        # Log dosyasını kapat
+        if self._log_id:
+            logger.remove(self._log_id)
+            self._log_id = None
         
         return report
     
